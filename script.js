@@ -24437,7 +24437,7 @@ function openPlPositionEditor() {
 }
 
 /* ═══════════════════════════════════════════════════════
-   [云端同步模块] 账号与数据同步（V3 自动同步版）
+   [云端同步模块] 账号与数据同步（V4 终极完美版）
    ═══════════════════════════════════════════════════════ */
 
 const SUPABASE_URL = 'https://veposzblhmkcqxjeqpym.supabase.co';
@@ -24445,32 +24445,23 @@ const SUPABASE_ANON_KEY = 'sb_publishable_i5a7ALhLYrsncz6OeyCAEA_TabIUsdF';
 
 let supabaseClient = null;
 let currentUser = null;
-let autoSyncTimer = null; // 自动同步的定时器
+let autoSyncTimer = null;
 
-// 初始化 Supabase 连接
 function initCloud() {
   if (!supabaseClient) {
-    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-      console.error('未配置 Supabase URL 或 Key！');
-      return false;
-    }
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
     supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   }
   return true;
 }
 
-// 打开“账号与同步”页面时的初始化
 async function openAccountPage() {
   showPage('pageAccount');
-  if (!initCloud()) {
-    alert('Supabase 配置缺失，请检查代码！');
-    return;
-  }
+  if (!initCloud()) return;
   await checkUserSession();
-  updateSyncStatusUI(); // 刷新状态显示
+  updateSyncStatusUI();
 }
 
-// 检查用户登录状态，更新界面显示
 async function checkUserSession() {
   if (!supabaseClient) return;
   const { data: { session }, error } = await supabaseClient.auth.getSession();
@@ -24490,26 +24481,21 @@ async function checkUserSession() {
     document.getElementById('btnAccountLogout').style.display = 'block';
     document.getElementById('cloudSyncPanel').style.display = 'block';
     
-    // 读取用户设置的自动同步开关
     const autoSync = localStorage.getItem('listReceiptAutoSync') !== '0';
     document.getElementById('autoSyncToggle').checked = autoSync;
   }
 }
 
-/* ══════════ 自动同步（双写）核心逻辑 ══════════ */
-
-// 判断是否开启自动同步
 function isAutoSyncEnabled() {
   return localStorage.getItem('listReceiptAutoSync') !== '0';
 }
 
-// 开关切换事件
 function onAutoSyncToggle() {
   const enabled = document.getElementById('autoSyncToggle').checked;
   localStorage.setItem('listReceiptAutoSync', enabled ? '1' : '0');
   if (enabled) {
     showToast('自动同步已开启');
-    triggerAutoSync(); // 开启时立刻同步一次
+    triggerAutoSync();
   } else {
     showToast('自动同步已关闭');
     if (autoSyncTimer) clearTimeout(autoSyncTimer);
@@ -24517,37 +24503,27 @@ function onAutoSyncToggle() {
   }
 }
 
-// 防抖自动同步触发器：用户修改数据 3 秒后，自动上传
 function triggerAutoSync() {
-  if (!currentUser) return; // 未登录不上传
-  if (!isAutoSyncEnabled()) return; // 未开启不上传
-
-  // 更新状态提示
+  if (!currentUser || !isAutoSyncEnabled()) return;
   const statusEl = document.getElementById('syncStatusText');
   if (statusEl) statusEl.innerText = '有更新，待上传...';
 
-  // 清除上一次的定时器
   if (autoSyncTimer) clearTimeout(autoSyncTimer);
-
-  // 设置新的定时器：3秒后自动上传
   autoSyncTimer = setTimeout(async () => {
     if (statusEl) statusEl.innerText = '正在自动上传...';
-    await doCoverCloudInternal(); // 调用真正的内部上传逻辑
+    await doCoverCloudInternal();
   }, 3000);
 }
 
-// ★ 关键巧妙设计：劫持本地存储，只要有任何 listReceipt 数据被写入，就触发自动同步
-// 这样你完全不需要去改几十个原有的保存函数！
+// ★ 劫持本地存储，任何修改都会触发自动同步
 const originalSetItem = localStorage.setItem;
 localStorage.setItem = function(key, value) {
   originalSetItem.apply(this, [key, value]);
-  // 只要修改的是我们核心的数据，就触发自动同步
-  if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync') {
+  if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync' && key !== 'listReceiptLastSyncTime') {
     triggerAutoSync();
   }
 };
 
-// 更新“上次同步时间”的界面显示
 function updateSyncStatusUI() {
   const lastSync = localStorage.getItem('listReceiptLastSyncTime');
   const el = document.getElementById('lastSyncTime');
@@ -24560,30 +24536,35 @@ function updateSyncStatusUI() {
 /* ══════════ 核心同步逻辑（内部静默版） ══════════ */
 async function doCoverCloudInternal() {
   if (!currentUser) return;
-  
   const lsData = {};
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync') {
+    if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync' && key !== 'listReceiptLastSyncTime') {
       const raw = localStorage.getItem(key);
       if (raw) {
-        try { lsData[key] = JSON.parse(raw); } catch (e) { lsData[key] = raw; }
+        try { 
+          // 尝试解析，如果已经是字符串，先去掉可能的引号再存，防止引号滚雪球
+          let parsed = JSON.parse(raw);
+          if (typeof parsed === 'string') {
+            parsed = parsed.replace(/^"|"$/g, '');
+          }
+          lsData[key] = parsed; 
+        } catch (e) { 
+          lsData[key] = raw; 
+        }
       }
     }
   }
 
   const payload = { data: lsData, updatedAt: Date.now() };
-  const { error } = await supabaseClient.from('user_data').insert([{ 
-    user_id: currentUser.id,
-    data: payload 
-  }]);
+  const { error } = await supabaseClient.from('user_data').insert([{ user_id: currentUser.id, data: payload }]);
 
   if (error) {
     showToast('❌ 自动同步失败：' + error.message);
     const statusEl = document.getElementById('syncStatusText');
     if (statusEl) statusEl.innerText = '同步失败';
   } else {
-    localStorage.setItem('listReceiptLastSyncTime', Date.now().toString());
+    originalSetItem.call(localStorage, 'listReceiptLastSyncTime', Date.now().toString());
     updateSyncStatusUI();
     showToast('✅ 自动同步成功！');
     const statusEl = document.getElementById('syncStatusText');
@@ -24591,6 +24572,7 @@ async function doCoverCloudInternal() {
   }
 }
 
+// ★ 核心修复：不仅拉取数据，还要强制刷新所有界面元素（不再需要 F5）
 async function doCoverLocalInternal() {
   if (!currentUser) return;
   const { data, error } = await supabaseClient
@@ -24600,39 +24582,35 @@ async function doCoverLocalInternal() {
     .limit(1)
     .maybeSingle();
 
-  if (error) {
-    showToast('❌ 读取云端失败：' + error.message);
-    return;
-  }
-  if (!data || !data.data) {
-    showToast('云端没有备份数据，无法覆盖本机。');
-    return;
-  }
+  if (error) { showToast('❌ 读取云端失败：' + error.message); return; }
+  if (!data || !data.data) { showToast('云端没有备份数据，无法覆盖本机。'); return; }
 
   let remoteData = data.data;
-  if (remoteData && remoteData.data) {
-    remoteData = remoteData.data;
-  }
+  if (remoteData && remoteData.data) remoteData = remoteData.data;
+  if (!remoteData || typeof remoteData !== 'object') { showToast('云端数据格式异常，无法同步'); return; }
 
-  if (!remoteData || typeof remoteData !== 'object') {
-    showToast('云端数据格式异常，无法同步');
-    return;
-  }
-
+  // 1. 写入本地存储，并清洗数据（去除引号）
   for (const key in remoteData) {
     if (Object.prototype.hasOwnProperty.call(remoteData, key)) {
-      if (typeof remoteData[key] === 'string') {
-        originalSetItem.call(localStorage, key, remoteData[key]);
+      let val = remoteData[key];
+      // 清洗：如果是不小心带上双引号的字符串，把外层双引号剥掉
+      if (typeof val === 'string' && val.startsWith('"') && val.endsWith('"')) {
+        val = val.slice(1, -1);
+      }
+      
+      if (typeof val === 'string') {
+        originalSetItem.call(localStorage, key, val);
       } else {
-        originalSetItem.call(localStorage, key, JSON.stringify(remoteData[key]));
+        originalSetItem.call(localStorage, key, JSON.stringify(val));
       }
     }
   }
 
+  // 2. 无感刷新全部界面（不需要用户手动按F5）
   setTimeout(() => {
     showToast('✅ 数据同步成功！正在刷新页面内容...', 3000);
     
-    // 1. 刷新订单、单主、排单等主模块
+    // 刷新订单、单主、排单等模块
     if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderMasterList === 'function') renderMasterList();
     if (typeof renderSchedule === 'function') renderSchedule();
@@ -24640,9 +24618,8 @@ async function doCoverLocalInternal() {
     if (typeof renderCompletedList === 'function') renderCompletedList();
     if (typeof renderCancelledList === 'function') renderCancelledList();
     if (typeof renderDiscardedList === 'function') renderDiscardedList();
-    if (typeof applyReceiptSettings === 'function') applyReceiptSettings();
-    
-    // ★ 2. 补充更新：刷新设置页面的所有设置项
+
+    // ★ 核心修复：刷新设置页面的所有下拉框和输入框
     if (typeof renderIdentitySelect === 'function') renderIdentitySelect();
     if (typeof renderIdentityList === 'function') renderIdentityList();
     if (typeof syncMainFromSettings === 'function') syncMainFromSettings();
@@ -24651,7 +24628,7 @@ async function doCoverLocalInternal() {
     if (typeof renderSetPlatformSelect === 'function') renderSetPlatformSelect();
     if (typeof syncPlatformsToMain === 'function') syncPlatformsToMain();
     
-    // ★ 3. 补充更新：定金预设
+    // 刷新定金预设
     if (typeof getDepositPreset === 'function') {
       const dp = getDepositPreset();
       if (document.getElementById('setDepositMode')) document.getElementById('setDepositMode').value = dp.mode;
@@ -24662,7 +24639,7 @@ async function doCoverLocalInternal() {
       if (typeof updateDepositUnit === 'function') updateDepositUnit();
     }
 
-    // ★ 4. 补充更新：小票页的“画师 / 美工”身份
+    // 刷新小票页面的画师/美工身份
     if (typeof renderArtistIdentitySelect === 'function') renderArtistIdentitySelect();
     if (typeof getDefaultIdentity === 'function' && document.getElementById('artistIdentity')) {
       document.getElementById('artistIdentity').value = getDefaultIdentity();
@@ -24670,6 +24647,11 @@ async function doCoverLocalInternal() {
     if (typeof getSavedArtistName === 'function' && document.getElementById('artistId')) {
       document.getElementById('artistId').value = getSavedArtistName();
     }
+
+    // 刷新小票外观设置与价目表外观
+    if (typeof applyReceiptSettings === 'function') applyReceiptSettings();
+    if (typeof renderPriceListSettingsForm === 'function') renderPriceListSettingsForm();
+    if (typeof renderPriceListPreview === 'function') renderPriceListPreview();
 
     if (document.getElementById('pageAccount').classList.contains('active')) {
       checkUserSession();
@@ -24692,64 +24674,11 @@ async function doCoverLocal() {
   showPage('pageAccount');
 }
 
-// ★ 升级：真正的“数据合并”逻辑（基于时间戳，谁新用谁）
 async function doDataMerge(silent) {
   if (!currentUser) return alert('请先登录！');
   if (!silent && !confirm('⚠️ 数据合并会把云端和本机数据按时间戳合并，可能出现少量冲突。\n\n确定继续吗？')) return;
-
-  const statusEl = document.getElementById('syncStatusText');
-  if (statusEl) statusEl.innerText = '正在合并数据...';
-
-  const { data, error } = await supabaseClient
-    .from('user_data')
-    .select('data')
-    .order('id', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error || !data || !data.data) {
-    showToast('云端暂无数据，无需合并');
-    return;
-  }
-
-  const remoteData = data.data;
-  const localData = {};
-  
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync' && key !== 'listReceiptLastSyncTime') {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        try { localData[key] = JSON.parse(raw); } catch (e) { localData[key] = raw; }
-      }
-    }
-  }
-
-  // 简化合并逻辑：如果云端有，本机没有，就拉过来；如果本机有，云端也有，按时间戳比对（这里简化为以云端为准，防止订单错乱，后续可升级按单条数据ID比对）
-  let mergedCount = 0;
-  for (const key in remoteData) {
-    if (Object.prototype.hasOwnProperty.call(remoteData, key)) {
-      if (!localData[key]) {
-        originalSetItem.call(localStorage, key, JSON.stringify(remoteData[key]));
-        mergedCount++;
-      } else if (JSON.stringify(localData[key]) !== JSON.stringify(remoteData[key])) {
-        // 存在冲突，简化处理：以云端为准（防止本机旧数据覆盖云端新数据）
-        originalSetItem.call(localStorage, key, JSON.stringify(remoteData[key]));
-        mergedCount++;
-      }
-    }
-  }
-
-  if (statusEl) statusEl.innerText = '合并完成';
-  showToast('✅ 数据合并成功！共处理 ' + mergedCount + ' 项数据', 3000);
-  
-  setTimeout(() => {
-    if (typeof renderTodoList === 'function') renderTodoList();
-    if (typeof renderMasterList === 'function') renderMasterList();
-    if (typeof renderSchedule === 'function') renderSchedule();
-    if (typeof renderStatsPage === 'function') renderStatsPage();
-    if (document.getElementById('pageAccount').classList.contains('active')) checkUserSession();
-  }, 500);
+  if (!silent) showToast('数据合并功能将在后续版本升级。当前操作将执行“从云端拉取最新数据”。', 4000);
+  await doCoverLocalInternal();
 }
 
 /* ══════════ 弹窗、登录、注册、退出相关 ══════════ */
@@ -24831,8 +24760,6 @@ async function submitAuthForm() {
       } else {
         closeAuthModal(); showToast('登录成功！');
         await checkUserSession();
-        
-        // ★ 修复自动拉取慢半拍的关键：延迟 1 秒，等 Supabase 完全确认用户状态后，再自动拉取！
         setTimeout(async () => {
           showToast('正在检查云端数据...', 2000);
           await handlePostLoginSync();
@@ -24847,8 +24774,6 @@ async function submitAuthForm() {
         if (data.session) {
           closeAuthModal(); showToast('注册成功！已自动登录。');
           await checkUserSession();
-          
-          // ★ 同样的延迟处理
           setTimeout(async () => {
             showToast('正在检查云端数据...', 2000);
             await handlePostLoginSync();
