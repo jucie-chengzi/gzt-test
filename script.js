@@ -24574,24 +24574,20 @@ async function doCoverCloudInternal() {
 
 // ★ 核心修复：不仅拉取数据，还要强制刷新所有界面元素（不再需要 F5）
 async function doCoverLocalInternal() {
-  // 不再信任外部的全局变量，直接等待自己的 Session 就绪
   let session = null;
   let retries = 0;
   while (!session && retries < 5) {
     const res = await supabaseClient.auth.getSession();
     if (res.data && res.data.session) {
       session = res.data.session;
-      currentUser = session.user; // 更新全局变量
+      currentUser = session.user;
       break;
     }
     await new Promise(r => setTimeout(r, 300));
     retries++;
   }
   
-  if (!session) {
-    showToast('登录状态未完全就绪，请稍后再试');
-    return;
-  }
+  if (!session) { showToast('登录状态未完全就绪，请稍后再试'); return; }
 
   const { data, error } = await supabaseClient
     .from('user_data')
@@ -24607,7 +24603,6 @@ async function doCoverLocalInternal() {
   if (remoteData && remoteData.data) remoteData = remoteData.data;
   if (!remoteData || typeof remoteData !== 'object') { showToast('云端数据格式异常，无法同步'); return; }
 
-  // 写入本地存储，并强力清洗数据（去除所有可能的引号）
   for (const key in remoteData) {
     if (Object.prototype.hasOwnProperty.call(remoteData, key)) {
       let val = remoteData[key];
@@ -24620,10 +24615,10 @@ async function doCoverLocalInternal() {
     }
   }
 
-  setTimeout(() => {
+  // ★ 核心优化：用 requestAnimationFrame 替代 setTimeout，渲染没有延迟
+  requestAnimationFrame(() => {
     showToast('✅ 数据同步成功！正在刷新页面内容...', 3000);
     
-    // 刷新主模块
     if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderMasterList === 'function') renderMasterList();
     if (typeof renderSchedule === 'function') renderSchedule();
@@ -24632,7 +24627,6 @@ async function doCoverLocalInternal() {
     if (typeof renderCancelledList === 'function') renderCancelledList();
     if (typeof renderDiscardedList === 'function') renderDiscardedList();
 
-    // 强制重绘身份和ID，直接读新值，彻底干掉所有覆盖逻辑！
     const newIdentity = localStorage.getItem('listReceiptDefaultIdentity') || '画师';
     const newArtistName = localStorage.getItem('listReceiptArtistName') || '';
     const identities = getIdentities();
@@ -24646,14 +24640,12 @@ async function doCoverLocalInternal() {
     const setNameInput = document.getElementById('setName');
     if (setNameInput) setNameInput.value = newArtistName;
 
-    // 同时刷新小票页的画师美工
     if (typeof renderArtistIdentitySelect === 'function') renderArtistIdentitySelect();
     const artistIdentitySel = document.getElementById('artistIdentity');
     if (artistIdentitySel) artistIdentitySel.value = newIdentity;
     const artistIdInput = document.getElementById('artistId');
     if (artistIdInput) artistIdInput.value = newArtistName;
 
-    // 刷新权限、平台、定金预设
     if (typeof renderPermissionList === 'function') renderPermissionList();
     if (typeof syncPermissionsToMain === 'function') syncPermissionsToMain();
     if (typeof renderSetPlatformSelect === 'function') renderSetPlatformSelect();
@@ -24669,7 +24661,6 @@ async function doCoverLocalInternal() {
       if (typeof updateDepositUnit === 'function') updateDepositUnit();
     }
 
-    // 刷新小票外观与价目表
     if (typeof applyReceiptSettings === 'function') applyReceiptSettings();
     if (typeof renderPriceListSettingsForm === 'function') renderPriceListSettingsForm();
     if (typeof renderPriceListPreview === 'function') renderPriceListPreview();
@@ -24677,7 +24668,7 @@ async function doCoverLocalInternal() {
     if (document.getElementById('pageAccount').classList.contains('active')) {
       checkUserSession();
     }
-  }, 500);
+  });
 }
 
 /* ══════════ 对外按钮（带确认框的手动同步） ══════════ */
@@ -24902,3 +24893,40 @@ async function submitForgotPassword() {
     showToast('邮件已发送，请查收！', 5000);
   }
 }
+/* ═══════════════════════════════════════════════════════
+   [多设备无缝同步] 页面激活时自动拉取云端最新数据
+   ═══════════════════════════════════════════════════════ */
+
+async function checkAndSyncOnLoad() {
+  if (!initCloud()) return;
+  // 检查是否处于已登录状态
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (session) {
+    currentUser = session.user;
+    // 页面载入或切回时，静默拉取云端最新数据
+    // 注意：这里直接调 doCoverLocalInternal，不会弹框，不会打扰用户
+    await doCoverLocalInternal();
+  }
+}
+
+// 场景1：用户直接打开网页（包含自动登录状态）
+window.addEventListener('load', () => {
+  // 延迟 1 秒执行，确保主项目所有的 render 函数已经初始化完毕
+  setTimeout(checkAndSyncOnLoad, 1000);
+});
+
+// 场景2：用户从别的 APP 切回浏览器（手机端极其常见）
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    checkAndSyncOnLoad();
+  }
+});
+
+// 场景3：用户按 F5 刷新页面（浏览器级别刷新）
+window.addEventListener('focus', () => {
+  // 避免频繁触发，加一个简单的防抖
+  if (window.__focusSyncTimer) clearTimeout(window.__focusSyncTimer);
+  window.__focusSyncTimer = setTimeout(() => {
+    checkAndSyncOnLoad();
+  }, 2000);
+});
