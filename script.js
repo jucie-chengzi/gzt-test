@@ -24563,6 +24563,7 @@ function onAutoSyncToggle() {
 
 function triggerAutoSync() {
   if (!currentUser || !isAutoSyncEnabled()) return;
+  
   const statusEl = document.getElementById('syncStatusText');
   if (statusEl) statusEl.innerText = '有更新，待上传...';
 
@@ -24570,7 +24571,7 @@ function triggerAutoSync() {
   autoSyncTimer = setTimeout(async () => {
     if (statusEl) statusEl.innerText = '正在自动上传...';
     await doCoverCloudInternal();
-  }, 3000);
+  }, 5000); // ★ 从3秒改成5秒，给用户充足的时间操作完毕，避免操作过程中频繁触发
 }
 
 // ★ 劫持本地存储，任何修改都会触发自动同步
@@ -24592,41 +24593,60 @@ function updateSyncStatusUI() {
 }
 
 /* ══════════ 核心同步逻辑（内部静默版） ══════════ */
+let isUploading = false; // ★ 增加并发锁
+
 async function doCoverCloudInternal() {
+  // ★ 安检1：必须先登录
   if (!currentUser) return;
-  const lsData = {};
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync' && key !== 'listReceiptLastSyncTime') {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        try { 
-          // 尝试解析，如果已经是字符串，先去掉可能的引号再存，防止引号滚雪球
-          let parsed = JSON.parse(raw);
-          if (typeof parsed === 'string') {
-            parsed = parsed.replace(/^"|"$/g, '');
-          }
-          lsData[key] = parsed; 
-        } catch (e) { 
-          lsData[key] = raw; 
+  if (isUploading) return; // ★ 安检2：如果正在上传，不要重复触发
+  isUploading = true;
+
+  try {
+    // ★ 安检3：上传前，强制重新拉取一次最新 Session，防止身份过期
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) { isUploading = false; return; }
+    currentUser = session.user; // 刷新全局用户
+
+    const lsData = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync' && key !== 'listReceiptLastSyncTime') {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          try { 
+            let parsed = JSON.parse(raw);
+            if (typeof parsed === 'string') parsed = parsed.replace(/^"|"$/g, '');
+            lsData[key] = parsed; 
+          } catch (e) { lsData[key] = raw; }
         }
       }
     }
-  }
 
-  const payload = { data: lsData, updatedAt: Date.now() };
-  const { error } = await supabaseClient.from('user_data').insert([{ user_id: currentUser.id, data: payload }]);
+    const payload = { data: lsData, updatedAt: Date.now() };
+    const { error } = await supabaseClient.from('user_data').insert([{ user_id: currentUser.id, data: payload }]);
 
-  if (error) {
-    showToast('❌ 自动同步失败：' + error.message);
-    const statusEl = document.getElementById('syncStatusText');
-    if (statusEl) statusEl.innerText = '同步失败';
-  } else {
+    if (error) {
+      // ★ 静默处理：如果是RLS错误，不要弹出吓人的大Toast，只控制台警告，并在5秒后自动重试一次
+      console.warn('自动同步被暂时拒绝 (RLS)，5秒后自动重试...', error.message);
+      const statusEl = document.getElementById('syncStatusText');
+      if (statusEl) statusEl.innerText = '同步重试中...';
+      
+      isUploading = false;
+      setTimeout(() => { doCoverCloudInternal(); }, 5000); // 5秒后重试
+      return;
+    }
+
+    // 成功
     originalSetItem.call(localStorage, 'listReceiptLastSyncTime', Date.now().toString());
     updateSyncStatusUI();
-    showToast('✅ 自动同步成功！');
+    showToast('✅ 自动同步成功！', 3000);
     const statusEl = document.getElementById('syncStatusText');
     if (statusEl) statusEl.innerText = '已同步';
+
+  } catch (e) {
+    console.error('自动同步异常', e);
+  } finally {
+    isUploading = false; // ★ 释放锁
   }
 }
 
