@@ -24589,11 +24589,10 @@ async function doCoverLocalInternal() {
   if (remoteData && remoteData.data) remoteData = remoteData.data;
   if (!remoteData || typeof remoteData !== 'object') { showToast('云端数据格式异常，无法同步'); return; }
 
-  // 1. 写入本地存储，并清洗数据（去除引号）
+  // 1. 写入本地存储，并清洗数据（去除双引号）
   for (const key in remoteData) {
     if (Object.prototype.hasOwnProperty.call(remoteData, key)) {
       let val = remoteData[key];
-      // 清洗：如果是不小心带上双引号的字符串，把外层双引号剥掉
       if (typeof val === 'string' && val.startsWith('"') && val.endsWith('"')) {
         val = val.slice(1, -1);
       }
@@ -24610,7 +24609,7 @@ async function doCoverLocalInternal() {
   setTimeout(() => {
     showToast('✅ 数据同步成功！正在刷新页面内容...', 3000);
     
-    // 刷新订单、单主、排单等模块
+    // 刷新主模块
     if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderMasterList === 'function') renderMasterList();
     if (typeof renderSchedule === 'function') renderSchedule();
@@ -24619,10 +24618,23 @@ async function doCoverLocalInternal() {
     if (typeof renderCancelledList === 'function') renderCancelledList();
     if (typeof renderDiscardedList === 'function') renderDiscardedList();
 
-    // ★ 核心修复：刷新设置页面的所有下拉框和输入框
+    // ★ 核心修复：重绘身份和ID，直接操作DOM，不做任何多余的逻辑！
     if (typeof renderIdentitySelect === 'function') renderIdentitySelect();
     if (typeof renderIdentityList === 'function') renderIdentityList();
-    if (typeof syncMainFromSettings === 'function') syncMainFromSettings();
+    
+    const savedName = localStorage.getItem('listReceiptArtistName') || '';
+    const defaultIdentity = localStorage.getItem('listReceiptDefaultIdentity') || '画师';
+    const cleanName = typeof savedName === 'string' ? savedName.replace(/^"|"$/g, '') : '';
+    const cleanIdentity = typeof defaultIdentity === 'string' ? defaultIdentity.replace(/^"|"$/g, '') : '画师';
+
+    if (document.getElementById('setIdentity')) document.getElementById('setIdentity').value = cleanIdentity;
+    if (document.getElementById('setName')) document.getElementById('setName').value = cleanName;
+    
+    if (typeof renderArtistIdentitySelect === 'function') renderArtistIdentitySelect();
+    if (document.getElementById('artistIdentity')) document.getElementById('artistIdentity').value = cleanIdentity;
+    if (document.getElementById('artistId')) document.getElementById('artistId').value = cleanName;
+
+    // 刷新权限、平台
     if (typeof renderPermissionList === 'function') renderPermissionList();
     if (typeof syncPermissionsToMain === 'function') syncPermissionsToMain();
     if (typeof renderSetPlatformSelect === 'function') renderSetPlatformSelect();
@@ -24639,16 +24651,7 @@ async function doCoverLocalInternal() {
       if (typeof updateDepositUnit === 'function') updateDepositUnit();
     }
 
-    // 刷新小票页面的画师/美工身份
-    if (typeof renderArtistIdentitySelect === 'function') renderArtistIdentitySelect();
-    if (typeof getDefaultIdentity === 'function' && document.getElementById('artistIdentity')) {
-      document.getElementById('artistIdentity').value = getDefaultIdentity();
-    }
-    if (typeof getSavedArtistName === 'function' && document.getElementById('artistId')) {
-      document.getElementById('artistId').value = getSavedArtistName();
-    }
-
-    // 刷新小票外观设置与价目表外观
+    // 刷新小票外观与价目表
     if (typeof applyReceiptSettings === 'function') applyReceiptSettings();
     if (typeof renderPriceListSettingsForm === 'function') renderPriceListSettingsForm();
     if (typeof renderPriceListPreview === 'function') renderPriceListPreview();
