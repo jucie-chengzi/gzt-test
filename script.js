@@ -24589,17 +24589,17 @@ async function doCoverLocalInternal() {
   if (remoteData && remoteData.data) remoteData = remoteData.data;
   if (!remoteData || typeof remoteData !== 'object') { showToast('云端数据格式异常，无法同步'); return; }
 
-  // 1. 写入本地存储，并清洗数据（去除双引号）
+  // 1. 写入本地存储，并强力清洗数据（去除所有可能的引号）
   for (const key in remoteData) {
     if (Object.prototype.hasOwnProperty.call(remoteData, key)) {
       let val = remoteData[key];
-      if (typeof val === 'string' && val.startsWith('"') && val.endsWith('"')) {
-        val = val.slice(1, -1);
-      }
       
+      // ★ 清洗：不管它是 `"贤来运转"` 还是 `贤来运转`，统统去掉首尾引号
       if (typeof val === 'string') {
+        val = val.replace(/^"|"$/g, '').replace(/^'|'$/g, '').trim();
         originalSetItem.call(localStorage, key, val);
       } else {
+        // 如果是数组或对象，就先变成JSON字符串，但不要加额外的引号
         originalSetItem.call(localStorage, key, JSON.stringify(val));
       }
     }
@@ -24618,29 +24618,33 @@ async function doCoverLocalInternal() {
     if (typeof renderCancelledList === 'function') renderCancelledList();
     if (typeof renderDiscardedList === 'function') renderDiscardedList();
 
-    // ★ 核心修复：重绘身份和ID，直接操作DOM，不做任何多余的逻辑！
-    if (typeof renderIdentitySelect === 'function') renderIdentitySelect();
-    if (typeof renderIdentityList === 'function') renderIdentityList();
-    
-    const savedName = localStorage.getItem('listReceiptArtistName') || '';
-    const defaultIdentity = localStorage.getItem('listReceiptDefaultIdentity') || '画师';
-    const cleanName = typeof savedName === 'string' ? savedName.replace(/^"|"$/g, '') : '';
-    const cleanIdentity = typeof defaultIdentity === 'string' ? defaultIdentity.replace(/^"|"$/g, '') : '画师';
+    // ★ 核心修复：强制重绘身份下拉框和ID输入框（直接读新值，不调旧函数）
+    const newIdentity = localStorage.getItem('listReceiptDefaultIdentity') || '画师';
+    const newArtistName = localStorage.getItem('listReceiptArtistName') || '';
+    const identities = getIdentities();
 
-    if (document.getElementById('setIdentity')) document.getElementById('setIdentity').value = cleanIdentity;
-    if (document.getElementById('setName')) document.getElementById('setName').value = cleanName;
+    const identitySel = document.getElementById('setIdentity');
+    if (identitySel) {
+      identitySel.innerHTML = identities.map(n => `<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
+      identitySel.value = newIdentity;
+    }
     
+    const setNameInput = document.getElementById('setName');
+    if (setNameInput) setNameInput.value = newArtistName;
+
+    // 同时刷新小票页的画师美工
     if (typeof renderArtistIdentitySelect === 'function') renderArtistIdentitySelect();
-    if (document.getElementById('artistIdentity')) document.getElementById('artistIdentity').value = cleanIdentity;
-    if (document.getElementById('artistId')) document.getElementById('artistId').value = cleanName;
+    const artistIdentitySel = document.getElementById('artistIdentity');
+    if (artistIdentitySel) artistIdentitySel.value = newIdentity;
+    const artistIdInput = document.getElementById('artistId');
+    if (artistIdInput) artistIdInput.value = newArtistName;
 
-    // 刷新权限、平台
+    // 刷新权限、平台、定金预设
     if (typeof renderPermissionList === 'function') renderPermissionList();
     if (typeof syncPermissionsToMain === 'function') syncPermissionsToMain();
     if (typeof renderSetPlatformSelect === 'function') renderSetPlatformSelect();
     if (typeof syncPlatformsToMain === 'function') syncPlatformsToMain();
     
-    // 刷新定金预设
     if (typeof getDepositPreset === 'function') {
       const dp = getDepositPreset();
       if (document.getElementById('setDepositMode')) document.getElementById('setDepositMode').value = dp.mode;
