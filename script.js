@@ -24609,7 +24609,6 @@ async function doCoverLocalInternal() {
     return;
   }
 
-  // ★ 修复关键：云端返回的数据套了两层，需要把最里面的数据抠出来
   let remoteData = data.data;
   if (remoteData && remoteData.data) {
     remoteData = remoteData.data;
@@ -24622,15 +24621,18 @@ async function doCoverLocalInternal() {
 
   for (const key in remoteData) {
     if (Object.prototype.hasOwnProperty.call(remoteData, key)) {
-      // 使用原始方法写入，防止触发自动同步导致死循环
-      originalSetItem.call(localStorage, key, JSON.stringify(remoteData[key]));
+      if (typeof remoteData[key] === 'string') {
+        originalSetItem.call(localStorage, key, remoteData[key]);
+      } else {
+        originalSetItem.call(localStorage, key, JSON.stringify(remoteData[key]));
+      }
     }
   }
 
   setTimeout(() => {
     showToast('✅ 数据同步成功！正在刷新页面内容...', 3000);
     
-    // 重新渲染各个模块，不跳转页面
+    // 1. 刷新订单、单主、排单等主模块
     if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderMasterList === 'function') renderMasterList();
     if (typeof renderSchedule === 'function') renderSchedule();
@@ -24640,6 +24642,35 @@ async function doCoverLocalInternal() {
     if (typeof renderDiscardedList === 'function') renderDiscardedList();
     if (typeof applyReceiptSettings === 'function') applyReceiptSettings();
     
+    // ★ 2. 补充更新：刷新设置页面的所有设置项
+    if (typeof renderIdentitySelect === 'function') renderIdentitySelect();
+    if (typeof renderIdentityList === 'function') renderIdentityList();
+    if (typeof syncMainFromSettings === 'function') syncMainFromSettings();
+    if (typeof renderPermissionList === 'function') renderPermissionList();
+    if (typeof syncPermissionsToMain === 'function') syncPermissionsToMain();
+    if (typeof renderSetPlatformSelect === 'function') renderSetPlatformSelect();
+    if (typeof syncPlatformsToMain === 'function') syncPlatformsToMain();
+    
+    // ★ 3. 补充更新：定金预设
+    if (typeof getDepositPreset === 'function') {
+      const dp = getDepositPreset();
+      if (document.getElementById('setDepositMode')) document.getElementById('setDepositMode').value = dp.mode;
+      if (document.getElementById('setDeposit')) document.getElementById('setDeposit').value = dp.value;
+      if (document.getElementById('depositMode')) document.getElementById('depositMode').value = dp.mode;
+      if (document.getElementById('deposit')) document.getElementById('deposit').value = dp.value;
+      if (typeof updateSetDepositUnit === 'function') updateSetDepositUnit();
+      if (typeof updateDepositUnit === 'function') updateDepositUnit();
+    }
+
+    // ★ 4. 补充更新：小票页的“画师 / 美工”身份
+    if (typeof renderArtistIdentitySelect === 'function') renderArtistIdentitySelect();
+    if (typeof getDefaultIdentity === 'function' && document.getElementById('artistIdentity')) {
+      document.getElementById('artistIdentity').value = getDefaultIdentity();
+    }
+    if (typeof getSavedArtistName === 'function' && document.getElementById('artistId')) {
+      document.getElementById('artistId').value = getSavedArtistName();
+    }
+
     if (document.getElementById('pageAccount').classList.contains('active')) {
       checkUserSession();
     }
@@ -24799,7 +24830,13 @@ async function submitAuthForm() {
         else showAuthError('登录失败：' + error.message);
       } else {
         closeAuthModal(); showToast('登录成功！');
-        await checkUserSession(); await handlePostLoginSync();
+        await checkUserSession();
+        
+        // ★ 修复自动拉取慢半拍的关键：延迟 1 秒，等 Supabase 完全确认用户状态后，再自动拉取！
+        setTimeout(async () => {
+          showToast('正在检查云端数据...', 2000);
+          await handlePostLoginSync();
+        }, 1000);
       }
     } else {
       const { data, error } = await supabaseClient.auth.signUp({ email, password });
@@ -24809,7 +24846,13 @@ async function submitAuthForm() {
       } else {
         if (data.session) {
           closeAuthModal(); showToast('注册成功！已自动登录。');
-          await checkUserSession(); await handlePostLoginSync();
+          await checkUserSession();
+          
+          // ★ 同样的延迟处理
+          setTimeout(async () => {
+            showToast('正在检查云端数据...', 2000);
+            await handlePostLoginSync();
+          }, 1000);
         } else showAuthError('该账号已注册，请直接登录！');
       }
     }
