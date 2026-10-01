@@ -24615,10 +24615,10 @@ async function doCoverLocalInternal() {
     }
   }
 
-  // ★ 核心优化：用 requestAnimationFrame 替代 setTimeout，渲染没有延迟
   requestAnimationFrame(() => {
     showToast('✅ 数据同步成功！正在刷新页面内容...', 3000);
     
+    // 刷新主模块
     if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderMasterList === 'function') renderMasterList();
     if (typeof renderSchedule === 'function') renderSchedule();
@@ -24627,6 +24627,10 @@ async function doCoverLocalInternal() {
     if (typeof renderCancelledList === 'function') renderCancelledList();
     if (typeof renderDiscardedList === 'function') renderDiscardedList();
 
+    // ★ 核心修复：补上漏掉的「身份预设列表」刷新！让它瞬间变成最新值，无需刷新页面！
+    if (typeof renderIdentityList === 'function') renderIdentityList();
+
+    // 强制重绘身份下拉框和ID输入框
     const newIdentity = localStorage.getItem('listReceiptDefaultIdentity') || '画师';
     const newArtistName = localStorage.getItem('listReceiptArtistName') || '';
     const identities = getIdentities();
@@ -24640,12 +24644,14 @@ async function doCoverLocalInternal() {
     const setNameInput = document.getElementById('setName');
     if (setNameInput) setNameInput.value = newArtistName;
 
+    // 刷新小票页的画师美工
     if (typeof renderArtistIdentitySelect === 'function') renderArtistIdentitySelect();
     const artistIdentitySel = document.getElementById('artistIdentity');
     if (artistIdentitySel) artistIdentitySel.value = newIdentity;
     const artistIdInput = document.getElementById('artistId');
     if (artistIdInput) artistIdInput.value = newArtistName;
 
+    // 刷新权限、平台、定金预设
     if (typeof renderPermissionList === 'function') renderPermissionList();
     if (typeof syncPermissionsToMain === 'function') syncPermissionsToMain();
     if (typeof renderSetPlatformSelect === 'function') renderSetPlatformSelect();
@@ -24661,6 +24667,7 @@ async function doCoverLocalInternal() {
       if (typeof updateDepositUnit === 'function') updateDepositUnit();
     }
 
+    // 刷新小票外观与价目表
     if (typeof applyReceiptSettings === 'function') applyReceiptSettings();
     if (typeof renderPriceListSettingsForm === 'function') renderPriceListSettingsForm();
     if (typeof renderPriceListPreview === 'function') renderPriceListPreview();
