@@ -1306,9 +1306,67 @@ function isFileIdRef(ref) {
         || s.indexOf('http') === 0);
 }
 
+/* ---------- 核心：前端图片 WebP 压缩引擎 ---------- */
+async function compressImageToWebP(file, maxWidth = 1200, quality = 0.8) {
+  return new Promise((resolve) => {
+    if (!file || !/^image\//.test(file.type)) { resolve(file); return; }
+    // 如果原图很小（小于150KB），直接返回原图，不折腾
+    if (file.size <= 150 * 1024) { resolve(file); return; }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const img = new Image();
+      img.onload = function() {
+        let width = img.naturalWidth || img.width;
+        let height = img.naturalHeight || img.height;
+
+        // 如果宽度大于 maxWidth，等比例缩放
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        
+        // 处理EXIF方向（防止手机照片横过来）
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // 转换为 WebP Blob
+        canvas.toBlob((blob) => {
+          if (blob && blob.size < file.size) {
+            // 压缩成功，且比原图小，使用压缩后的图
+            resolve(blob);
+          } else {
+            // 压缩失败，或者比原图大，直接用原图
+            resolve(file);
+          }
+        }, 'image/webp', quality); // 压缩为 WebP 格式
+      };
+      img.onerror = () => resolve(file); // 加载失败，原图兜底
+      img.src = e.target.result;
+    };
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------- 统一图片入口（已接入压缩） ---------- */
 async function saveImageFromFile(file, name) {
   if (!file) return '';
-  return await saveImageBlob(file, name || file.name || '');
+  try {
+    // ★ 核心改造：所有上传图片，先经过压缩
+    let finalBlob = file;
+    if (/^image\//.test(file.type)) {
+      finalBlob = await compressImageToWebP(file, 1200, 0.8);
+    }
+    return await saveImageBlob(finalBlob, name || file.name || '');
+  } catch (e) {
+    console.warn('图片压缩或保存失败，使用原图兜底', e);
+    return await saveImageBlob(file, name || file.name || '');
+  }
 }
 
 
