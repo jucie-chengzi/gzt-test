@@ -1233,27 +1233,54 @@ window.addEventListener('beforeunload', releaseAllObjectURLs);
 async function saveImageBlob(blob, name) {
   if (!blob) return '';
 
+  // 1. 先保存在本地 IndexedDB
+  let localRef = '';
   if (!__idbAvailable) {
-    return await blobToDataURL(blob);
+    localRef = await blobToDataURL(blob);
+  } else {
+    const id = makeUniqueId('file');
+    const rec = {
+      id: id,
+      blob: blob,
+      name: String(name || ''),
+      type: String(blob.type || ''),
+      size: Number(blob.size || 0),
+      createdAt: Date.now(),
+    };
+    try {
+      await idbPutFile(rec);
+      localRef = id;
+    } catch (e) {
+      console.warn('[IDB] 写入失败，降级 base64', e);
+      localRef = await blobToDataURL(blob);
+    }
   }
 
-  const id = makeUniqueId('file');
-  const rec = {
-    id: id,
-    blob: blob,
-    name: String(name || ''),
-    type: String(blob.type || ''),
-    size: Number(blob.size || 0),
-    createdAt: Date.now(),
-  };
+  // 2. 如果已登录，同时把图片上传到云端 Supabase Storage
+  if (currentUser && supabaseClient) {
+    try {
+      // 生成一个独一无二的云路径，带上用户ID，保证隔离安全
+      const fileExt = blob.type === 'image/webp' ? 'webp' : 'png';
+      const cloudPath = `${currentUser.id}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
-  try {
-    await idbPutFile(rec);
-    return id;
-  } catch (e) {
-    console.warn('[IDB] 写入失败，降级 base64', e);
-    return await blobToDataURL(blob);
+      const { error } = await supabaseClient.storage
+        .from('images')
+        .upload(cloudPath, blob, { contentType: blob.type, upsert: true });
+
+      if (!error) {
+        // 上传成功，把云路径记在本地 IDB 里，方便以后去云上找
+        // 我们直接把云路径拼接到本地引用上，用双下划线隔开，方便解析
+        localRef = localRef + '__cloud__' + cloudPath;
+        console.log('图片成功上传到云端:', cloudPath);
+      } else {
+        console.warn('图片上传云端失败:', error.message);
+      }
+    } catch (err) {
+      console.warn('图片上传云端异常:', err);
+    }
   }
+
+  return localRef;
 }
 
 async function saveBase64Image(dataUrl, name) {
@@ -1267,11 +1294,48 @@ async function saveBase64Image(dataUrl, name) {
 async function resolveImageSrc(ref) {
   if (!ref) return '';
   const s = String(ref);
+
+  // 1. 如果是直链或 base64，直接返回
   if (s.indexOf('data:') === 0 || s.indexOf('blob:') === 0 || s.indexOf('http') === 0) {
     return s;
   }
-  const url = await getFileObjectURL(s);
-  return url || '';
+
+  // 2. 解析出本地引用和云路径
+  let localId = s;
+  let cloudPath = '';
+  if (s.indexOf('__cloud__') > -1) {
+    const parts = s.split('__cloud__');
+    localId = parts[0];
+    cloudPath = parts[1];
+  }
+
+  // 3. 先尝试从本地 IDB 读取
+  const localUrl = await getFileObjectURL(localId);
+  if (localUrl) return localUrl;
+
+  // 4. 本地没有（比如换了设备），从云端下载
+  if (cloudPath && currentUser && supabaseClient) {
+    try {
+      console.log('本地找不到图片，正在从云端下载:', cloudPath);
+      const { data, error } = await supabaseClient.storage.from('images').download(cloudPath);
+      
+      if (!error && data) {
+        // 下载成功，存回本地 IDB，这样下次就不需要再下载了
+        const newLocalId = makeUniqueId('file');
+        await idbPutFile({
+          id: newLocalId, blob: data, name: cloudPath,
+          type: data.type, size: data.size, createdAt: Date.now(),
+        });
+        
+        // 返回新生成的本地 URL
+        return await getFileObjectURL(newLocalId);
+      }
+    } catch (err) {
+      console.warn('从云端下载图片失败', err);
+    }
+  }
+
+  return '';
 }
 
 /* ★ 安全删除：如果图片被任何预设引用，就跳过 */
@@ -1293,9 +1357,28 @@ async function deleteImageRef(ref) {
   if (!ref) return;
   const s = String(ref);
   if (s.indexOf('data:') === 0 || s.indexOf('blob:') === 0) return;
-  releaseObjectURL(s);
-  try { await idbDeleteFile(s); }
-  catch (e) {}
+
+  let localId = s;
+  let cloudPath = '';
+  if (s.indexOf('__cloud__') > -1) {
+    const parts = s.split('__cloud__');
+    localId = parts[0];
+    cloudPath = parts[1];
+  }
+
+  // 1. 删除本地
+  releaseObjectURL(localId);
+  try { await idbDeleteFile(localId); } catch (e) {}
+
+  // 2. 删除云端
+  if (cloudPath && currentUser && supabaseClient) {
+    try {
+      await supabaseClient.storage.from('images').remove([cloudPath]);
+      console.log('已删除云端图片:', cloudPath);
+    } catch (err) {
+      console.warn('删除云端图片失败', err);
+    }
+  }
 }
 
 function isFileIdRef(ref) {
