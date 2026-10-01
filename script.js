@@ -1336,6 +1336,61 @@ async function resolveImageSrc(ref) {
   }
 
   return '';
+}async function resolveImageSrc(ref) {
+  if (!ref) return '';
+  const s = String(ref);
+
+  // 1. 如果是直链或 base64，直接返回
+  if (s.indexOf('data:') === 0 || s.indexOf('blob:') === 0 || s.indexOf('http') === 0) {
+    return s;
+  }
+
+  // 2. 解析出本地引用和云路径
+  let localId = s;
+  let cloudPath = '';
+  if (s.indexOf('__cloud__') > -1) {
+    const parts = s.split('__cloud__');
+    localId = parts[0];
+    cloudPath = parts[1];
+  }
+
+  // 3. 先尝试从本地 IDB 读取
+  const localUrl = await getFileObjectURL(localId);
+  if (localUrl) return localUrl;
+
+  // 4. 本地没有（比如换了设备），从云端下载
+  if (cloudPath && supabaseClient) {
+    try {
+      // ★ 核心修复：不依赖全局 currentUser，强制自己去拿 Session
+      let { data: { session } } = await supabaseClient.auth.getSession();
+      
+      // 如果还是没 Session，说明刚打开页面，等 1 秒再试一次
+      if (!session) {
+        await new Promise(r => setTimeout(r, 1000));
+        const res = await supabaseClient.auth.getSession();
+        session = res.data.session;
+      }
+      
+      if (!session) return ''; // 确实没登录，放弃
+
+      console.log('本地找不到图片，正在从云端下载:', cloudPath);
+      const { data, error } = await supabaseClient.storage.from('images').download(cloudPath);
+      
+      if (!error && data) {
+        // 下载成功，存回本地 IDB，这样下次就不需要再下载了
+        const newLocalId = makeUniqueId('file');
+        await idbPutFile({
+          id: newLocalId, blob: data, name: cloudPath,
+          type: data.type, size: data.size, createdAt: Date.now(),
+        });
+        // 返回新生成的本地 URL
+        return await getFileObjectURL(newLocalId);
+      }
+    } catch (err) {
+      console.warn('从云端下载图片失败', err);
+    }
+  }
+  return '';
 }
 
 /* ★ 安全删除：如果图片被任何预设引用，就跳过 */
