@@ -24744,6 +24744,7 @@ function switchAuthMode() {
 
 function showAuthError(msg) { document.getElementById('authModalError').innerText = msg; }
 
+/* ══════════ 核心验证与提交逻辑 ══════════ */
 async function submitAuthForm() {
   if (!initCloud()) return;
   const email = document.getElementById('authEmail').value.trim();
@@ -24765,12 +24766,11 @@ async function submitAuthForm() {
         if (error.message.indexOf('Invalid login credentials') > -1) showAuthError('该账号未注册，请先注册！');
         else showAuthError('登录失败：' + error.message);
       } else {
-        closeAuthModal(); showToast('登录成功！');
+        closeAuthModal(); 
+        showToast('登录成功！');
         await checkUserSession();
-        setTimeout(async () => {
-          showToast('正在检查云端数据...', 2000);
-          await handlePostLoginSync();
-        }, 1000);
+        // ★ 核心修复：登录成功后，立即执行静默检查并拉取，不再用 setTimeout 延迟！
+        await handlePostLoginSync();
       }
     } else {
       const { data, error } = await supabaseClient.auth.signUp({ email, password });
@@ -24779,12 +24779,11 @@ async function submitAuthForm() {
         else showAuthError('注册失败：' + error.message);
       } else {
         if (data.session) {
-          closeAuthModal(); showToast('注册成功！已自动登录。');
+          closeAuthModal(); 
+          showToast('注册成功！已自动登录。');
           await checkUserSession();
-          setTimeout(async () => {
-            showToast('正在检查云端数据...', 2000);
-            await handlePostLoginSync();
-          }, 1000);
+          // ★ 核心修复：注册成功后，立即执行静默检查并拉取！
+          await handlePostLoginSync();
         } else showAuthError('该账号已注册，请直接登录！');
       }
     }
@@ -24796,17 +24795,31 @@ async function submitAuthForm() {
   }
 }
 
+/* ══════════ 登录后的智能同步逻辑（极简静默版） ══════════ */
 async function handlePostLoginSync() {
-  const { data, error } = await supabaseClient.from('user_data').select('id').limit(1).maybeSingle();
-  if (error) { showToast('检查云端数据失败：' + error.message); return; }
+  // 1. 先查一下云端有没有这个账号的数据
+  const { data, error } = await supabaseClient
+    .from('user_data')
+    .select('id')
+    .limit(1)
+    .maybeSingle();
 
+  if (error) { 
+    showToast('检查云端数据失败：' + error.message);
+    return; 
+  }
+
+  // 2. 云端有数据 → 直接静默拉取，不弹任何确认框，不打扰用户！
   if (data) {
-    showToast('检测到云端已有备份，正在自动为您同步到本机...', 3000);
+    showToast('正在从云端同步数据到本机...', 2000);
     await doCoverLocalInternal();
   } else {
+    // 3. 云端没数据（首次注册）→ 询问是否上传本机数据
     if (confirm('检测到您是本机首次登录，是否将本机当前数据上传到云端备份？\n\n选择“取消”则仅登录，不上传。')) {
       await doCoverCloudInternal();
-    } else showToast('已跳过数据上传。数据仅保存在本机。', 3000);
+    } else {
+      showToast('已跳过数据上传。数据仅保存在本机。', 3000);
+    }
   }
 }
 
