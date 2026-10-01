@@ -24596,21 +24596,22 @@ function updateSyncStatusUI() {
 let isUploading = false; // ★ 增加并发锁
 
 async function doCoverCloudInternal() {
-  // ★ 安检1：必须先登录
   if (!currentUser) return;
-  if (isUploading) return; // ★ 安检2：如果正在上传，不要重复触发
+  if (isUploading) return; // 并发锁
   isUploading = true;
 
   try {
-    // ★ 安检3：上传前，强制重新拉取一次最新 Session，防止身份过期
+    // 记录本地操作时间，防止同步时被云端覆盖
+    originalSetItem.call(localStorage, 'lastLocalModifyTime', Date.now().toString());
+
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (!session) { isUploading = false; return; }
-    currentUser = session.user; // 刷新全局用户
+    currentUser = session.user;
 
     const lsData = {};
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync' && key !== 'listReceiptLastSyncTime') {
+      if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync' && key !== 'listReceiptLastSyncTime' && key !== 'lastLocalModifyTime') {
         const raw = localStorage.getItem(key);
         if (raw) {
           try { 
@@ -24626,17 +24627,15 @@ async function doCoverCloudInternal() {
     const { error } = await supabaseClient.from('user_data').insert([{ user_id: currentUser.id, data: payload }]);
 
     if (error) {
-      // ★ 静默处理：如果是RLS错误，不要弹出吓人的大Toast，只控制台警告，并在5秒后自动重试一次
       console.warn('自动同步被暂时拒绝 (RLS)，5秒后自动重试...', error.message);
       const statusEl = document.getElementById('syncStatusText');
       if (statusEl) statusEl.innerText = '同步重试中...';
       
       isUploading = false;
-      setTimeout(() => { doCoverCloudInternal(); }, 5000); // 5秒后重试
+      setTimeout(() => { doCoverCloudInternal(); }, 5000);
       return;
     }
 
-    // 成功
     originalSetItem.call(localStorage, 'listReceiptLastSyncTime', Date.now().toString());
     updateSyncStatusUI();
     showToast('✅ 自动同步成功！', 3000);
@@ -24646,12 +24645,18 @@ async function doCoverCloudInternal() {
   } catch (e) {
     console.error('自动同步异常', e);
   } finally {
-    isUploading = false; // ★ 释放锁
+    isUploading = false;
   }
 }
 
 // ★ 核心修复：不仅拉取数据，还要强制刷新所有界面元素（不再需要 F5）
 async function doCoverLocalInternal() {
+    // ★ 防回滚护栏：如果本地 15 秒内有过修改，说明用户正在操作，拒绝从云端覆盖本地的拉取！
+  const lastMod = localStorage.getItem('lastLocalModifyTime');
+  if (lastMod && Date.now() - Number(lastMod) < 15000) {
+    console.warn('本地有新鲜操作，已跳过此次云端覆盖');
+    return;
+  }
   let session = null;
   let retries = 0;
   while (!session && retries < 5) {
