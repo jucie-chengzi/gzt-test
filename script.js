@@ -24574,7 +24574,25 @@ async function doCoverCloudInternal() {
 
 // ★ 核心修复：不仅拉取数据，还要强制刷新所有界面元素（不再需要 F5）
 async function doCoverLocalInternal() {
-  if (!currentUser) return;
+  // 不再信任外部的全局变量，直接等待自己的 Session 就绪
+  let session = null;
+  let retries = 0;
+  while (!session && retries < 5) {
+    const res = await supabaseClient.auth.getSession();
+    if (res.data && res.data.session) {
+      session = res.data.session;
+      currentUser = session.user; // 更新全局变量
+      break;
+    }
+    await new Promise(r => setTimeout(r, 300));
+    retries++;
+  }
+  
+  if (!session) {
+    showToast('登录状态未完全就绪，请稍后再试');
+    return;
+  }
+
   const { data, error } = await supabaseClient
     .from('user_data')
     .select('data')
@@ -24589,23 +24607,19 @@ async function doCoverLocalInternal() {
   if (remoteData && remoteData.data) remoteData = remoteData.data;
   if (!remoteData || typeof remoteData !== 'object') { showToast('云端数据格式异常，无法同步'); return; }
 
-  // 1. 写入本地存储，并强力清洗数据（去除所有可能的引号）
+  // 写入本地存储，并强力清洗数据（去除所有可能的引号）
   for (const key in remoteData) {
     if (Object.prototype.hasOwnProperty.call(remoteData, key)) {
       let val = remoteData[key];
-      
-      // ★ 清洗：不管它是 `"贤来运转"` 还是 `贤来运转`，统统去掉首尾引号
       if (typeof val === 'string') {
         val = val.replace(/^"|"$/g, '').replace(/^'|'$/g, '').trim();
         originalSetItem.call(localStorage, key, val);
       } else {
-        // 如果是数组或对象，就先变成JSON字符串，但不要加额外的引号
         originalSetItem.call(localStorage, key, JSON.stringify(val));
       }
     }
   }
 
-  // 2. 无感刷新全部界面（不需要用户手动按F5）
   setTimeout(() => {
     showToast('✅ 数据同步成功！正在刷新页面内容...', 3000);
     
@@ -24618,7 +24632,7 @@ async function doCoverLocalInternal() {
     if (typeof renderCancelledList === 'function') renderCancelledList();
     if (typeof renderDiscardedList === 'function') renderDiscardedList();
 
-    // ★ 核心修复：强制重绘身份下拉框和ID输入框（直接读新值，不调旧函数）
+    // 强制重绘身份和ID，直接读新值，彻底干掉所有覆盖逻辑！
     const newIdentity = localStorage.getItem('listReceiptDefaultIdentity') || '画师';
     const newArtistName = localStorage.getItem('listReceiptArtistName') || '';
     const identities = getIdentities();
@@ -24797,24 +24811,28 @@ async function submitAuthForm() {
 
 /* ══════════ 登录后的智能同步逻辑（极简静默版） ══════════ */
 async function handlePostLoginSync() {
-  // 1. 先查一下云端有没有这个账号的数据
-  const { data, error } = await supabaseClient
-    .from('user_data')
-    .select('id')
-    .limit(1)
-    .maybeSingle();
-
-  if (error) { 
-    showToast('检查云端数据失败：' + error.message);
-    return; 
+  showToast('正在检查云端数据...', 2000);
+  
+  let cloudData = null;
+  let retries = 0;
+  
+  // 最多重试6次（等待3秒），解决 Supabase 登录状态延迟导致的自动拉取失败！
+  while (!cloudData && retries < 6) {
+    const { data, error } = await supabaseClient.from('user_data').select('id').limit(1).maybeSingle();
+    if (data) {
+      cloudData = data;
+      break;
+    }
+    await new Promise(r => setTimeout(r, 500)); // 等500毫秒再试
+    retries++;
   }
 
-  // 2. 云端有数据 → 直接静默拉取，不弹任何确认框，不打扰用户！
-  if (data) {
-    showToast('正在从云端同步数据到本机...', 2000);
+  if (cloudData) {
+    // 找到云端数据，直接静默拉取，不弹框！
+    showToast('正在从云端同步数据到本机...', 3000);
     await doCoverLocalInternal();
   } else {
-    // 3. 云端没数据（首次注册）→ 询问是否上传本机数据
+    // 等了三秒还没数据，说明是全新用户
     if (confirm('检测到您是本机首次登录，是否将本机当前数据上传到云端备份？\n\n选择“取消”则仅登录，不上传。')) {
       await doCoverCloudInternal();
     } else {
