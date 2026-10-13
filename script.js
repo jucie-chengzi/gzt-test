@@ -8655,6 +8655,12 @@ async function confirmFinalSettle() {
 
   if (!completed) { closeModal(); return; }
 
+  /* ★ 新增：如果生成了新的结单小票，顺便把旧的订单小票物理删除，避免多占存储空间 */
+  if (finalReceiptRef && t.receiptImage && t.receiptImage !== finalReceiptRef) {
+    try { await deleteImageRef(t.receiptImage); } catch (e) {}
+    t.receiptImage = finalReceiptRef; // 更新为最新
+  }
+
   /* 记尾款流水（负尾款 → 退款流水） */
   if (s.finalAmount > 0) {
     addFlow('final', s.finalAmount, '尾款 · ' + (t.clientName || '未命名'), today, {
@@ -9269,6 +9275,9 @@ function confirmDiscard() {
       receiptSnapshot: t.receiptSnapshot || null,
       tags: (t.tags || []).slice(),
     });
+    /* ★ 新增：清理该订单的素材和要求图片 */
+    await cleanupOrderImages(t);
+
     setTodos(todos.filter(x => x.id !== state.id));
     window.__discardState = null;
     closeModal();
@@ -9959,6 +9968,9 @@ function confirmCancelNegative(doRefund) {
     tags: (t.tags || []).slice(),
   });
 
+  /* ★ 新增：清理该订单的素材和要求图片 */
+  await cleanupOrderImages(t);
+  
   setTodos(todos.filter(x => x.id !== state.id));
   window.__cancelState = null;
   closeModal();
@@ -25205,6 +25217,7 @@ window.addEventListener('focus', () => {
 async function cleanupOrderImages(todo) {
   if (!todo) return;
   try {
+    // 清理素材图和要求图
     const kinds = ['materials', 'requirements'];
     for (const kind of kinds) {
       const arr = todo[kind] || [];
