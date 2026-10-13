@@ -8751,6 +8751,13 @@ async function generateFinalReceipt(todo, settleState) {
     /* 5. ★ 关键：把真实的小票 DOM 移到屏幕外（不是克隆，保留所有内联 CSS 变量） */
     offscreen.appendChild(receiptEl);
 
+    /* ★ 核心修复1：强行触发一次重绘，重新计算图片的尺寸和位置，防止错乱 */
+    if (typeof applyReceiptSettings === 'function') {
+      applyReceiptSettings();
+    }
+    // 给足时间让图片重新调整尺寸
+    await new Promise(r => setTimeout(r, 500)); 
+
     /* 6. 改付款区（改的是真实的 DOM） */
     const payTotals = receiptEl.querySelector('.pay-totals');
     let originalPayHTML = '';
@@ -8774,10 +8781,10 @@ async function generateFinalReceipt(todo, settleState) {
       if (finalRow) finalRow.style.display = 'none';
     }
 
-    /* 7. 等图片加载完 */
-    await waitForImagesIn(receiptEl, 1800);
+    /* 7. ★ 核心修复2：等图片加载完，把超时时间加长到 3000 毫秒（3秒），防止网络慢导致空白 */
+    await waitForImagesIn(receiptEl, 3000);
     await new Promise(r => requestAnimationFrame(r));
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, 300));
 
     /* 8. 截图（截图前隐藏所有编辑手柄，防止被截进去） */
     const handleState = hideAllReceiptHandles();
@@ -8859,7 +8866,8 @@ function openFinalReceiptModal(imageRef) {
     body.innerHTML = `
       <img src="${escapeAttr(url)}" alt="结单小票"
            style="max-width:100%;max-height:55vh;border:1px solid var(--line-soft);display:block;margin:0 auto;" />
-      <div class="actions" style="justify-content:center;margin-top:18px;">
+      <div class="actions" style="justify-content:center;margin-top:18px;gap:10px;">
+        <button class="action-btn ghost" onclick="closeFinalReceiptAndExit()">不保存退出</button>
         <button class="action-btn" onclick="saveFinalReceiptAndClose('${escapeAttr(imageRef)}')">保存到相册</button>
       </div>
     `;
@@ -8868,7 +8876,23 @@ function openFinalReceiptModal(imageRef) {
     showSimpleAlert('已结单', '订单已结单，可在「结」页面查看。');
   });
 }
+/* ══════════ 不保存直接退出结单小票 ══════════ */
+function closeFinalReceiptAndExit() {
+  closeModal();
 
+  // 手动切页面（不走 showPage，避免触发"小票未导入"警告）
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const target = $('pageCompleted');
+  if (target) target.classList.add('active');
+
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    if (btn.dataset.page === 'pageTodo') btn.classList.add('active');
+    else btn.classList.remove('active');
+  });
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (typeof renderCompletedList === 'function') renderCompletedList();
+}
 async function saveFinalReceiptAndClose(imageRef) {
   try {
     const url = await resolveImageSrc(imageRef);
