@@ -8794,9 +8794,26 @@ async function generateFinalReceipt(todo, settleState) {
       if (finalRow) finalRow.style.display = 'none';
     }
 
-    /* 7. ★ 核心修复2：等图片加载完，把超时时间加长到 3000 毫秒（3秒），防止网络慢导致空白 */
+    /* 7. ★ 核心修复：等图片加载完，并强制重算布局，防止票尾覆盖和背景图不适配 */
     await waitForImagesIn(receiptEl, 3000);
     await new Promise(r => requestAnimationFrame(r));
+    
+    // 强制修正票尾块高度，防止绝对定位的图片盖住上方金额
+    const footerBlock = receiptEl.querySelector('#outFooterBlock');
+    const footerImg = receiptEl.querySelector('#outFooterImg');
+    if (footerBlock && footerImg && footerBlock.classList.contains('show')) {
+      const imgH = footerImg.offsetHeight || 0;
+      const imgT = parseFloat(footerImg.style.top) || 0;
+      footerBlock.style.height = (imgT + imgH) + 'px';
+    }
+
+    // 强制背景图拉伸到小票实际内容高度，解决长度不适配
+    const bgImg = receiptEl.querySelector('#outBgImg');
+    if (bgImg && bgImg.classList.contains('has-img')) {
+      bgImg.style.height = receiptEl.scrollHeight + 'px';
+      bgImg.style.width = receiptEl.clientWidth + 'px';
+    }
+
     await new Promise(r => setTimeout(r, 300));
 
     /* 8. 截图（截图前隐藏所有编辑手柄，防止被截进去） */
