@@ -24848,8 +24848,16 @@ async function doCoverCloudInternal() {
       }
     }
 
-    const payload = { data: lsData, updatedAt: Date.now() };
-    const { error } = await supabaseClient.from('user_data').insert([{ user_id: currentUser.id, data: payload }]);
+        const payload = { data: lsData, updatedAt: Date.now() };
+    
+    // ★ 终极完美修复：使用 upsert（有则更新，无则插入）。
+    // 这样不仅云端永远只有 1 行数据，而且不会出现“删除后插入失败导致数据丢失”的风险，绝对安全。
+    const { error } = await supabaseClient
+      .from('user_data')
+      .upsert(
+        { user_id: session.user.id, data: payload, updated_at: new Date().toISOString() }, 
+        { onConflict: 'user_id' }
+      );
 
     if (error) {
       console.warn('自动同步被暂时拒绝 (RLS)，5秒后自动重试...', error.message);
