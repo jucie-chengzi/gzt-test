@@ -4772,10 +4772,10 @@ function applyReceiptPreset(preset) {
   if (p.footerImg) s.footerImg = p.footerImg;
   if (p.bgImg)     s.bgImg     = p.bgImg;
 
-  /* 图片位置状态 */
-  if (p.headerImgState) s.headerImgState = JSON.parse(JSON.stringify(p.headerImgState));
-  if (p.footerImgState) s.footerImgState = JSON.parse(JSON.stringify(p.footerImgState));
-  if (p.bgImgState)     s.bgImgState     = JSON.parse(JSON.stringify(p.bgImgState));
+   /* ★ 核心修复：加载预设时，强制将背景图、票头、票尾设置为自适应模式，以适配当前小票的实际长度，杜绝留白和错位 */
+    s.headerImgState = { w: 0, h: 0, l: 0, t: 0, baseW: 0 };
+    s.footerImgState = { w: 0, h: 0, l: 0, t: 0, baseW: 0 };
+    s.bgImgState     = { w: 0, h: 0, l: 0, t: 0, baseW: 0 };
 
   setReceiptSettings(s);
   fillReceiptSettingsForm();
@@ -4786,13 +4786,15 @@ function applyReceiptPreset(preset) {
   if (typeof fillContentSettingsForm === 'function') fillContentSettingsForm();
 
   /* 图片加载完后重新绑定编辑手柄 */
-  if ($('receiptLayout') && $('receiptLayout').classList.contains('settings-open')) {
+      // ★ 核心修复：延时重绘，确保小票内容完全渲染后，图片能自动适应最新高度
     setTimeout(() => {
-      setupReceiptImgDrag();
-      updateReceiptImageActiveState();
-    }, 200);
+      if (typeof applyReceiptSettings === 'function') applyReceiptSettings();
+      if ($('receiptLayout') && $('receiptLayout').classList.contains('settings-open')) {
+        setupReceiptImgDrag();
+        updateReceiptImageActiveState();
+      }
+    }, 250);
   }
-}
 
 function deleteReceiptPreset(idx) {
   const list = getReceiptPresetList();
