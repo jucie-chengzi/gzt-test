@@ -8675,7 +8675,7 @@ async function confirmFinalSettle() {
   }
 
   /* ★ 新增：清理该订单的素材和要求图片（释放云端空间） */
-  await cleanupOrderImages(t);
+  cleanupOrderImages(t).catch(e => console.warn(e));
 
   /* 从待办移除 */
   setTodos(todos.filter(x => x.id !== s.todoId));
@@ -9108,7 +9108,7 @@ async function confirmPlaceholderDiscard(doRefund) {
   });
 
   /* ★ 新增：清理该订单的素材和要求图片 */
-  await cleanupOrderImages(t);
+  cleanupOrderImages(t).catch(e => console.warn(e));
 
   setTodos(todos.filter(x => x.id !== state.id));
 
@@ -9276,7 +9276,7 @@ async function confirmDiscard() {
       tags: (t.tags || []).slice(),
     });
     /* ★ 新增：清理该订单的素材和要求图片 */
-    await cleanupOrderImages(t);
+    cleanupOrderImages(t).catch(e => console.warn(e));
 
     setTodos(todos.filter(x => x.id !== state.id));
     window.__discardState = null;
@@ -9628,7 +9628,7 @@ async function confirmPlaceholderCancel(doRefund) {
   });
 
   /* ★ 新增：清理该订单的素材和要求图片 */
-  await cleanupOrderImages(t);
+  cleanupOrderImages(t).catch(e => console.warn(e));
 
   setTodos(todos.filter(x => x.id !== state.id));
 
@@ -9969,7 +9969,7 @@ async function confirmCancelNegative(doRefund) {
   });
 
   /* ★ 新增：清理该订单的素材和要求图片 */
-  await cleanupOrderImages(t);
+  cleanupOrderImages(t).catch(e => console.warn(e));
 
   setTodos(todos.filter(x => x.id !== state.id));
   window.__cancelState = null;
