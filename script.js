@@ -6492,7 +6492,11 @@ function askDeleteTodo(id) {
     </div>`;
 }
 
-function confirmDeleteTodo(id) {
+async function confirmDeleteTodo(id) {
+  const targetTodo = getTodos().find(t => t.id === id);
+  if (targetTodo) {
+    await cleanupOrderImages(targetTodo); // ★ 新增：清理图片
+  }
   const todos = getTodos().filter(t => t.id !== id);
   setTodos(todos);
   removeFlowsByTodoId(id);
@@ -8664,6 +8668,9 @@ async function confirmFinalSettle() {
     });
   }
 
+  /* ★ 新增：清理该订单的素材和要求图片（释放云端空间） */
+  await cleanupOrderImages(t);
+
   /* 从待办移除 */
   setTodos(todos.filter(x => x.id !== s.todoId));
 
@@ -9093,6 +9100,9 @@ function confirmPlaceholderDiscard(doRefund) {
     receiptSnapshot: t.receiptSnapshot || null,
     tags: (t.tags || []).slice(),
   });
+
+  /* ★ 新增：清理该订单的素材和要求图片 */
+  await cleanupOrderImages(t);
 
   setTodos(todos.filter(x => x.id !== state.id));
 
@@ -9607,6 +9617,9 @@ function confirmPlaceholderCancel(doRefund) {
     receiptSnapshot: t.receiptSnapshot || null,
     tags: (t.tags || []).slice(),
   });
+
+  /* ★ 新增：清理该订单的素材和要求图片 */
+  await cleanupOrderImages(t);
 
   setTodos(todos.filter(x => x.id !== state.id));
 
@@ -25186,3 +25199,26 @@ window.addEventListener('focus', () => {
     checkAndSyncOnLoad();
   }, 2000);
 });
+/* ═══════════════════════════════════════════════════════
+   [图片清理机制] 删除素材图和要求图，释放云端空间
+   ═══════════════════════════════════════════════════════ */
+async function cleanupOrderImages(todo) {
+  if (!todo) return;
+  try {
+    const kinds = ['materials', 'requirements'];
+    for (const kind of kinds) {
+      const arr = todo[kind] || [];
+      for (const f of arr) {
+        if (!f) continue;
+        const ref = f.fileRef || f.dataUrl || '';
+        if (ref) {
+          try { await deleteImageRef(ref); } catch (e) {}
+        }
+      }
+      todo[kind] = []; // 清空数组
+    }
+    console.log('已清理订单素材/要求图片:', todo.id || todo.todoId);
+  } catch (e) {
+    console.warn('清理订单图片失败', e);
+  }
+}
