@@ -1571,7 +1571,11 @@
     <section class="page" id="pageBasicSetting">
       <div class="page-head">
         <h1>基础信息</h1>
-        <button class="action-btn ghost" onclick="showPage('pageSettings')" style="padding:8px 16px;">← 返回</button>
+        <div style="display:flex; gap:10px;">
+          <button class="action-btn ghost" id="basicSettingEditBtn" onclick="toggleBasicSettingEdit()" style="padding:8px 16px;">编辑</button>
+          <button class="action-btn" id="basicSettingSaveBtn" onclick="saveBasicSetting()" style="padding:8px 16px; display:none;">保存</button>
+          <button class="action-btn ghost" onclick="backFromBasicSetting()" style="padding:8px 16px;">← 返回</button>
+        </div>
       </div>
       <section class="panel">
         <div class="module" style="grid-template-columns: 1fr 1fr;">

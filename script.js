@@ -7742,9 +7742,14 @@ async function importToTodo() {
   if (typeof renderSchedule === 'function') renderSchedule();
   if (typeof renderStatsPage === 'function') renderStatsPage();
   if (typeof renderMasterList === 'function') renderMasterList();
+  
+  // ★ 导入订单成功后，强制同步一次云端
+  if (typeof currentUser !== 'undefined' && currentUser && typeof doCoverCloudInternal === 'function') {
+    doCoverCloudInternal().catch(e => console.warn(e));
+  }
+  
   showPage('pageTodo');
 }
-
 
 /* ═══════════════════════════════════════════════════════
    [F-08] calcSnapshotAmounts —— 从快照算金额
@@ -24772,6 +24777,18 @@ function onAutoSyncToggle() {
 function triggerAutoSync() {
   if (!currentUser || !isAutoSyncEnabled()) return;
   
+  // ★ 核心策略：在“基础信息页”和“小票填写页”时，禁止触发自动同步。
+  // 这些页面只有用户点击“保存”或“导入订单”时，才会手动调用 doCoverCloudInternal() 同步。
+  const currentActivePage = document.querySelector('.page.active');
+  if (currentActivePage) {
+    const pageId = currentActivePage.id;
+    if (pageId === 'pageBasicSetting' || pageId === 'pageReceipt') {
+      // 记入待同步状态，不触发网络请求
+      window.__syncPending = true;
+      return; 
+    }
+  }
+
   const statusEl = document.getElementById('syncStatusText');
   if (statusEl) statusEl.innerText = '有更新，待上传...';
 
@@ -24779,7 +24796,7 @@ function triggerAutoSync() {
   autoSyncTimer = setTimeout(async () => {
     if (statusEl) statusEl.innerText = '正在自动上传...';
     await doCoverCloudInternal();
-  }, 5000); // ★ 从3秒改成5秒，给用户充足的时间操作完毕，避免操作过程中频繁触发
+  }, 5000);
 }
 
 // ★ 劫持本地存储，任何修改都会触发自动同步
@@ -25251,4 +25268,128 @@ async function cleanupOrderImages(todo) {
   } catch (e) {
     console.warn('清理订单图片失败', e);
   }
+}
+/* ═══════════════════════════════════════════════════════
+   [基础信息页] 编辑 / 保存 / 防丢失拦截
+   ═══════════════════════════════════════════════════════ */
+
+let __basicSettingEditMode = false;
+let __basicSettingSnapshot = null;
+
+function takeBasicSettingSnapshot() {
+  return {
+    identity: $('setIdentity') ? $('setIdentity').value : '',
+    name: $('setName') ? $('setName').value : '',
+    platform: $('setPlatform') ? $('setPlatform').value : '',
+    depositMode: $('setDepositMode') ? $('setDepositMode').value : '',
+    deposit: $('setDeposit') ? $('setDeposit').value : '',
+  };
+}
+
+function isBasicSettingDirty() {
+  if (!__basicSettingSnapshot) return false;
+  const cur = takeBasicSettingSnapshot();
+  const old = __basicSettingSnapshot;
+  return cur.identity !== old.identity || cur.name !== old.name || 
+         cur.platform !== old.platform || cur.depositMode !== old.depositMode || 
+         cur.deposit !== old.deposit;
+}
+
+function toggleBasicSettingEdit() {
+  __basicSettingEditMode = true;
+  __basicSettingSnapshot = takeBasicSettingSnapshot();
+  
+  // 开启编辑
+  ['setIdentity', 'setName', 'setPlatform', 'setDepositMode', 'setDeposit'].forEach(id => {
+    const el = $(id);
+    if (el) el.disabled = false;
+  });
+  
+  // 重新渲染列表，让删除按钮显示出来
+  if (typeof renderIdentityList === 'function') renderIdentityList();
+  if (typeof renderPermissionList === 'function') renderPermissionList();
+
+  document.getElementById('basicSettingEditBtn').style.display = 'none';
+  document.getElementById('basicSettingSaveBtn').style.display = 'block';
+  showToast('已进入编辑模式，修改后请点保存', 3000);
+}
+
+async function saveBasicSetting() {
+  if (!__basicSettingEditMode) return;
+  __basicSettingEditMode = false;
+
+  // 1. 同步到主页（你原本的逻辑）
+  if (typeof syncMainFromSettings === 'function') syncMainFromSettings();
+  if (typeof syncPermissionsToMain === 'function') syncPermissionsToMain();
+  if (typeof syncPlatformsToMain === 'function') syncPlatformsToMain();
+  if (typeof syncDepositFromSettings === 'function') syncDepositFromSettings();
+
+  // 2. ★ 手动触发一次云端同步
+  if (typeof currentUser !== 'undefined' && currentUser && typeof doCoverCloudInternal === 'function') {
+    await doCoverCloudInternal();
+  }
+
+  // 3. 关闭编辑模式
+  ['setIdentity', 'setName', 'setPlatform', 'setDepositMode', 'setDeposit'].forEach(id => {
+    const el = $(id);
+    if (el) el.disabled = true;
+  });
+  if (typeof renderIdentityList === 'function') renderIdentityList();
+  if (typeof renderPermissionList === 'function') renderPermissionList();
+  __basicSettingSnapshot = null;
+
+  document.getElementById('basicSettingEditBtn').style.display = 'block';
+  document.getElementById('basicSettingSaveBtn').style.display = 'none';
+  showToast('✅ 基础信息已保存并同步', 3000);
+}
+
+function backFromBasicSetting() {
+  if (__basicSettingEditMode && isBasicSettingDirty()) {
+    // 弹窗询问
+    $('modalRoot').innerHTML = `
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal" onclick="event.stopPropagation()">
+          <div class="modal-head"><h3>未保存的修改</h3><button class="icon-btn" onclick="closeModal()">×</button></div>
+          <div class="modal-body">
+            <p style="margin:8px 0;line-height:1.7;">检测到编辑内容有改动，要保存吗？</p>
+            <div class="actions" style="justify-content:flex-end;margin-top:18px;flex-wrap:wrap;">
+              <button class="action-btn ghost" onclick="closeModal()">取消</button>
+              <button class="action-btn ghost" style="border-color:var(--red);color:var(--red);" onclick="confirmBasicSettingDiscard()">放弃修改</button>
+              <button class="action-btn" onclick="confirmBasicSettingSave()">保存并返回</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    return;
+  }
+  exitBasicSettingEdit();
+  showPage('pageSettings');
+}
+
+function exitBasicSettingEdit() {
+  __basicSettingEditMode = false;
+  __basicSettingSnapshot = null;
+  ['setIdentity', 'setName', 'setPlatform', 'setDepositMode', 'setDeposit'].forEach(id => {
+    const el = $(id);
+    if (el) el.disabled = true;
+  });
+  if (typeof renderIdentityList === 'function') renderIdentityList();
+  if (typeof renderPermissionList === 'function') renderPermissionList();
+  
+  const editBtn = document.getElementById('basicSettingEditBtn');
+  const saveBtn = document.getElementById('basicSettingSaveBtn');
+  if (editBtn) editBtn.style.display = 'block';
+  if (saveBtn) saveBtn.style.display = 'none';
+}
+
+function confirmBasicSettingDiscard() {
+  closeModal();
+  exitBasicSettingEdit();
+  showPage('pageSettings');
+}
+
+async function confirmBasicSettingSave() {
+  closeModal();
+  await saveBasicSetting();
+  showPage('pageSettings');
 }
