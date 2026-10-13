@@ -4772,10 +4772,10 @@ function applyReceiptPreset(preset) {
   if (p.footerImg) s.footerImg = p.footerImg;
   if (p.bgImg)     s.bgImg     = p.bgImg;
 
-   /* ★ 核心修复：加载预设时，强制将背景图、票头、票尾设置为自适应模式，以适配当前小票的实际长度，杜绝留白和错位 */
-    s.headerImgState = { w: 0, h: 0, l: 0, t: 0, baseW: 0 };
-    s.footerImgState = { w: 0, h: 0, l: 0, t: 0, baseW: 0 };
-    s.bgImgState     = { w: 0, h: 0, l: 0, t: 0, baseW: 0 };
+    /* ★ 核心修复：加载预设时，票头/票尾必须保留用户自定义的位置和大小。只有背景图需要清零，以便重绘时自动适应小票新的高度。 */
+    if (p.headerImgState) s.headerImgState = JSON.parse(JSON.stringify(p.headerImgState));
+    if (p.footerImgState) s.footerImgState = JSON.parse(JSON.stringify(p.footerImgState));
+    s.bgImgState = { w: 0, h: 0, l: 0, t: 0, baseW: 0 };
 
   setReceiptSettings(s);
   fillReceiptSettingsForm();
