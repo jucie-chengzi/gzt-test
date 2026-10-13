@@ -729,8 +729,11 @@ button.action-btn:hover { opacity: 0.86; }
   position: absolute; top: 0; left: 0;
   display: none; cursor: pointer;
   user-select: none; -webkit-user-select: none;
-  touch-action: none; pointer-events: auto;
+  touch-action: none; pointer-events: none; /* 默认不响应触摸事件 */
   object-fit: fill;
+}
+.receipt-bg-wrap.receipt-img-edit-active .receipt-bg-img {
+  pointer-events: auto; /* 只有在编辑状态下，背景图才响应拖动 */
 }
 .receipt-bg-wrap.receipt-img-edit-active .receipt-bg-img { cursor: move; }
 .receipt-bg-wrap .receipt-bg-img:active { cursor: grabbing; }
@@ -755,10 +758,13 @@ button.action-btn:hover { opacity: 0.86; }
 .receipt-img-block > img {
   position: absolute; top: 0; left: 0;
   width: 100%; height: auto;
-  pointer-events: auto;
+  pointer-events: none; /* 默认不响应触摸事件，让手指滑动生效 */
   -webkit-user-drag: none; user-select: none;
   object-fit: fill;
   cursor: pointer;
+}
+.receipt-img-block.receipt-img-edit-active > img {
+  pointer-events: auto; /* 只有在编辑状态下，图片才响应拖动 */
 }
 .receipt-img-block.receipt-img-edit-active > img { cursor: move; }
 

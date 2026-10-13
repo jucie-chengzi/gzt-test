@@ -7498,6 +7498,10 @@ function editTodoReceipt() {
    ═══════════════════════════════════════════════════════ */
 
 async function importToTodo() {
+  if (window.isImportingTodo) return; // 如果正在导入，直接拦截
+  window.isImportingTodo = true;
+  setTimeout(() => { window.isImportingTodo = false; }, 5000); // 5秒后自动解锁，防止卡死
+  
   const receiptPanel = $('receiptPanel');
   if (!receiptPanel || receiptPanel.classList.contains('hidden')) {
     showSimpleAlert('提示', '请先点「确定生成」生成小票。');
