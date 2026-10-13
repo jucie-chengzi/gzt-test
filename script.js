@@ -25,7 +25,7 @@
 /* ══════════ [U-01] 全局常量 / 存储 key ══════════ */
 
 /* ---- 应用版本（用于更新公告） ---- */
-const APP_VERSION = '1.1.4';
+const APP_VERSION = '1.2.0';
 const ANNOUNCEMENT_SEEN_KEY = 'listReceiptAnnouncementSeen';
 
 /* ---- 数据版本 + 迁移 ---- */
@@ -2722,7 +2722,11 @@ function renderAlgorithmSettings() {
     <div class="modal-overlay" onclick="if(event.target===this)closeAlgorithmSettings()">
       <div class="modal algo-modal" onclick="event.stopPropagation()">
         <div class="modal-head">
-          <h3>算法设置</h3>
+          <h3 style="flex:1; display:flex; align-items:center;">算法设置 
+            <button class="icon-btn" style="color:#2b7fff; display:inline-flex; width:22px; height:22px; padding:0; margin-left:8px; vertical-align:middle;" onclick="showAlgorithmFormulaModal()" title="查看算法公式说明">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8.01"/><line x1="12" y1="11" x2="12" y2="16"/></svg>
+            </button>
+          </h3>
           <button class="icon-btn" onclick="closeAlgorithmSettings()">×</button>
         </div>
         <div class="modal-body">
@@ -18800,6 +18804,39 @@ function backFromOrderFilterResult() {
 
 var USER_MANUAL_MODULES = [
   {
+    id: 'cloud',
+    title: '云同步',
+    items: [
+      {
+        title: '账号与同步（云同步）',
+        html: `
+          <p><strong>按钮位置：</strong>首页右上角按钮排最后一位（云朵图标）。</p>
+          <p><strong>按钮功能：</strong>登录账号后，将订单、单主、自定义设置等数据备份到云端。更换设备或清缓存后，登录同一账号即可自动恢复数据，实现跨设备无缝衔接。</p>
+          <p><strong>怎么操作：</strong></p>
+          <ol>
+            <li><strong>注册 / 登录：</strong>点击首页云朵图标，进入“账号与同步”页面，点击【立即登录 / 注册】完成操作。</li>
+            <li><strong>手动同步：</strong>登录后，点击【覆盖云端】将本机数据备份到云；点击【覆盖本机】将云端数据拉取到当前设备。</li>
+            <li><strong>自动同步：</strong>默认开启。操作软件时系统会在后台默默上传；换新设备登录账号时，系统会自动拉取云端数据。</li>
+          </ol>
+          <p><strong>注意：</strong>如果收不到密码找回邮件，请检查垃圾箱，或直接重新注册新账号。</p>
+        `
+      },
+      {
+        title: '结单小票保存选项',
+        html: `
+          <p><strong>功能位置：</strong>订单结单后弹出的“结单小票”弹窗。</p>
+          <p><strong>功能说明：</strong>可自行选择是否将小票图片保存到相册，不再强制保存。</p>
+          <p><strong>怎么操作：</strong></p>
+          <ul>
+            <li>点击【保存到相册】即可下载图片。</li>
+            <li>点击【不保存退出】直接关闭弹窗并返回结单列表。</li>
+          </ul>
+          <p><strong>注意：</strong>无论是否保存图片，结单小票都已经自动存入“票夹”和“结单记录”中，以后随时可以查看。</p>
+        `
+      }
+    ]
+  },
+  {
     id: 'quickstart',
     title: '快速上手',
     items: [
@@ -20124,6 +20161,7 @@ var __umCurrentModuleId = '';
 /* 用户手册模块显示顺序 */
 var UM_MODULE_ORDER = [
   'quickstart',
+  'cloud',
   'receipt',
   'serviceFee',
   'algorithm',
@@ -20362,6 +20400,17 @@ const ANNOUNCEMENTS = {
       <p style="margin-top:12px;">已有数据会自动升级，无需手动处理。</p>
     `,
   },
+  '1.2.0': {
+    title: '账号云同步上线',
+    html: `
+      <ul style="padding-left:20px;line-height:1.85;">
+        <li><strong>云同步功能上线</strong>：首页右上角新增“账号与同步”按钮（最后一个云朵图标）。</li>
+        <li><strong>跨设备无缝衔接</strong>：现在你可以注册并登录账号。开启云端同步后，同账号数据可跨设备/浏览器使用。</li>
+        <li><strong>结单小票更贴心</strong>：生成结单小票时，可自行选择是否保存图片，不再强制保存。</li>
+      </ul>
+      <p style="margin-top:12px;">已有数据会自动升级，无需手动处理。</p>
+    `,
+  },
 };
 
 
@@ -20405,8 +20454,9 @@ function showAnnouncementModal(ann) {
         <div class="ann-card-body">
           ${ann.html || '<p>本次更新暂无说明。</p>'}
         </div>
-        <div class="ann-card-foot">
-          <button type="button" class="ann-card-btn" onclick="closeAnnouncement()">我知道了</button>
+        <div class="ann-card-foot" style="display:flex; gap:10px;">
+          <button type="button" class="ann-card-btn" style="flex:1; background:#ffffff; color:var(--ink); border:1px solid var(--line);" onclick="closeAnnouncement()">我知道了</button>
+          <button type="button" class="ann-card-btn" style="flex:1;" onclick="closeAnnouncement(); showAccountLogin();">注册 / 登录账号</button>
         </div>
       </div>
     </div>`;
@@ -25400,4 +25450,63 @@ async function confirmBasicSettingSave() {
   closeModal();
   await saveBasicSetting();
   showPage('pageSettings');
+}
+/* ══════════ 算法公式说明弹窗 ══════════ */
+function showAlgorithmFormulaModal() {
+  const html = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()" style="z-index: 9999;">
+      <div class="modal" style="max-width: 520px; max-height: 85vh;" onclick="event.stopPropagation()">
+        <div class="modal-head">
+          <h3>本系统算法公式大全</h3>
+          <button class="icon-btn" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body" style="font-size: 13.5px; line-height: 1.8; color: var(--ink);">
+          
+          <p style="color:var(--red); font-weight:600; margin-top:0;">※ 以下为核心计算公式汇总，请结合当前选择的算法理解。</p>
+          
+          <h4 style="margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px dashed var(--line-soft); color: #1a5fcc;">1. 单稿件计算</h4>
+          <ul style="padding-left: 20px; margin: 4px 0;">
+            <li>单稿件原价（单元）= 基础价 + 增项合计</li>
+            <li>单稿件原价（小计）= 单稿件原价（单元）× 数量</li>
+            <li><b>单稿件合计 = 单稿件原价（小计）× 用途比例（权限倍率）</b></li>
+          </ul>
+
+          <h4 style="margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px dashed var(--line-soft); color: #1a5fcc;">2. 组内计算</h4>
+          <ul style="padding-left: 20px; margin: 4px 0;">
+            <li>组原价 = 组内所有稿件「单稿件原价（小计）」之和</li>
+            <li>组小计 = 组内所有稿件「单稿件合计」之和</li>
+            <li>组附加 = 按当前算法设置的基数 × 系数（或固定金额）</li>
+            <li>组折扣 = 按当前算法设置的基数 × 系数（或固定金额）</li>
+            <li><b>组合计 = 组小计 + 组附加 − 组折扣</b></li>
+          </ul>
+
+          <h4 style="margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px dashed var(--line-soft); color: #1a5fcc;">3. 订单级计算</h4>
+          <ul style="padding-left: 20px; margin: 4px 0;">
+            <li>总附加 = 按当前算法设置的基数 × 系数（或固定金额）</li>
+            <li>总折扣 = 按当前算法设置的基数 × 系数（或固定金额）</li>
+            <li><b>订单总价 = 各稿件组合计之和 + 总附加 − 总折扣</b></li>
+          </ul>
+
+          <h4 style="margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px dashed var(--line-soft); color: #1a5fcc;">4. 服务费与尾款</h4>
+          <ul style="padding-left: 20px; margin: 4px 0;">
+            <li>服务费 = 按平台规则（画加 / 米画师 / 咸鱼）基数 × 费率</li>
+            <li><b>应付金额（买家付） = 订单总价 + 服务费</b></li>
+            <li><b>待结尾款（用户收） = 应付金额 − 预付款 − 服务费</b></li>
+          </ul>
+          <p style="font-size: 12px; color: var(--ink-soft); margin-top: 10px;">
+            （注：服务费是平台收取的，不计入用户实收，算尾款时需扣除。）
+          </p>
+
+          <div style="margin-top: 24px; padding: 12px 14px; background: #f0f6ff; border-radius: 6px; font-size: 12.5px; color: #1a5fcc; line-height: 1.7;">
+            <strong>💡 提示：</strong>更多高级公式和详细示例，请到首页右上角<b>第一个菜单按钮（工具箱）</strong></b>里的<b>「用户手册」</b>查看。
+          </div>
+
+          <div class="actions" style="justify-content:flex-end; margin-top: 18px;">
+            <button class="action-btn" onclick="closeModal()">我知道了</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalRoot').innerHTML = html;
 }
