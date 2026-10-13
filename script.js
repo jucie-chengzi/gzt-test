@@ -9068,7 +9068,7 @@ function discardTodo(id) {
     </div>`;
 }
 
-function confirmPlaceholderDiscard(doRefund) {
+async function confirmPlaceholderDiscard(doRefund) {
   const state = window.__discardState;
   if (!state) { closeModal(); return; }
 
@@ -9240,7 +9240,7 @@ function onDiscardFinalAmountChange() {
   }
 }
 
-function confirmDiscard() {
+async function confirmDiscard() {
   const state = window.__discardState;
   if (!state) { closeModal(); return; }
 
@@ -9386,7 +9386,7 @@ function confirmDiscard() {
   }
 }
 
-function confirmDiscardNegative(doRefund) {
+async function confirmDiscardNegative(doRefund) {
   const state = window.__discardState;
   if (!state) { closeModal(); return; }
 
@@ -9587,7 +9587,7 @@ function cancelTodo(id) {
     </div>`;
 }
 
-function confirmPlaceholderCancel(doRefund) {
+async function confirmPlaceholderCancel(doRefund) {
   const state = window.__cancelState;
   if (!state) { closeModal(); return; }
 
@@ -9768,7 +9768,7 @@ function onCancelFeePrepaidToggle() {
   onCancelFeeValueChange();
 }
 
-function confirmCancel() {
+async function confirmCancel() {
   const state = window.__cancelState;
   if (!state) { closeModal(); return; }
 
@@ -9928,7 +9928,7 @@ function confirmCancel() {
   }
 }
 
-function confirmCancelNegative(doRefund) {
+async function confirmCancelNegative(doRefund) {
   const state = window.__cancelState;
   if (!state) { closeModal(); return; }
 
@@ -9970,7 +9970,7 @@ function confirmCancelNegative(doRefund) {
 
   /* ★ 新增：清理该订单的素材和要求图片 */
   await cleanupOrderImages(t);
-  
+
   setTodos(todos.filter(x => x.id !== state.id));
   window.__cancelState = null;
   closeModal();
