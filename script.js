@@ -24873,8 +24873,11 @@ function onAutoSyncToggle() {
 }
 
 // ============================================================
-// [同步核心 v2] 本地优先 + 完整操作立即上传 + 失败真重试
+// [同步核心 v3] 本地优先 + 完整操作立即上传 + 失败真重试 + 未上传标记持久化
 // ============================================================
+
+// 未上传标记（持久化到 localStorage，跨刷新/跨关闭浏览器都有效）
+const PENDING_FLAG_KEY = 'receiptPendingUploadFlag';
 
 // 是否有"完整操作产生、但还没上传成功"的本地数据
 window.__hasUnsavedChanges = false;
@@ -24890,6 +24893,30 @@ window.__batchWriteMode = false;
 // 这些页面上的写入不上传（编辑中）
 const SYNC_SKIP_PAGES = ['pageReceipt', 'pageBasicSetting', 'pagePriceListSettings'];
 
+// 读写未上传标记
+function setPendingFlag(on) {
+  try {
+    if (on) {
+      originalSetItem.call(localStorage, PENDING_FLAG_KEY, '1');
+    } else {
+      localStorage.removeItem(PENDING_FLAG_KEY);
+    }
+  } catch (e) {}
+}
+function hasPendingFlag() {
+  try { return localStorage.getItem(PENDING_FLAG_KEY) === '1'; }
+  catch (e) { return false; }
+}
+
+// 启动时从 flag 恢复 __hasUnsavedChanges（跨刷新的兜底）
+(function restorePendingFlagOnLoad() {
+  try {
+    if (localStorage.getItem(PENDING_FLAG_KEY) === '1') {
+      window.__hasUnsavedChanges = true;
+    }
+  } catch (e) {}
+})();
+
 function isSyncSkippedPage() {
   const cur = document.querySelector('.page.active');
   if (!cur) return false;
@@ -24904,15 +24931,11 @@ function canSyncNow() {
 function triggerAutoSync() {
   if (!currentUser || !isAutoSyncEnabled()) return;
   if (window.__batchWriteMode) return;
-
-  // 编辑中的打字：不上传
   if (window.__isTyping) return;
-
-  // 编辑页：不上传（等用户点保存时再传）
   if (isSyncSkippedPage()) return;
 
-  // 到这里说明是一次"完整操作"
   window.__hasUnsavedChanges = true;
+  setPendingFlag(true);
 
   const statusEl = document.getElementById('syncStatusText');
   if (statusEl) statusEl.innerText = '有更新，待上传...';
@@ -24926,8 +24949,8 @@ function triggerAutoSync() {
 
 // 立即上传（无延迟，等云端真写完才算成功）
 async function commitSyncNow(silent) {
-  if (!canSyncNow()) return;
-  await doCoverCloudInternal(silent);
+  if (!canSyncNow()) return false;
+  return await doCoverCloudInternal(silent);
 }
 
 // 全局监听：输入 → 进入"打字中"
@@ -24993,7 +25016,7 @@ function updateSyncStatusUI() {
   }
 }
 
-/* ══════════ 核心同步逻辑（v2 · 本地优先） ══════════ */
+/* ══════════ 核心同步逻辑（v3 · 本地优先） ══════════ */
 let __isUploading = false;    // 上传中锁
 let __uploadRetryCount = 0;   // 失败重试次数
 let __uploadRetryTimer = null;
@@ -25050,9 +25073,10 @@ async function doCoverCloudInternal(silent) {
     __isUploading = false;
   }
 
-  // 云端真的写成功 → 清标记、提示成功
+  // 云端真的写成功 → 清标记、清 pending flag、提示成功
   if (!uploadError) {
     window.__hasUnsavedChanges = false;
+    setPendingFlag(false);
     __uploadRetryCount = 0;
     if (__uploadRetryTimer) { clearTimeout(__uploadRetryTimer); __uploadRetryTimer = null; }
     originalSetItem.call(localStorage, 'listReceiptLastSyncTime', Date.now().toString());
@@ -25062,8 +25086,9 @@ async function doCoverCloudInternal(silent) {
     return true;
   }
 
-  // 失败：保留未上传标记，退避重试（5s / 10s / 20s / 40s / 60s）
+  // 失败：保留未上传标记 + pending flag，退避重试（5s / 10s / 20s / 40s / 60s）
   window.__hasUnsavedChanges = true;
+  setPendingFlag(true);
   if (statusEl) statusEl.innerText = '同步失败，待重试...';
   if (!silent) showToast('⚠️ 已保存到本地，云端暂未同步。网络恢复后会自动上传。', 5000);
 
@@ -25081,7 +25106,7 @@ async function doCoverCloudInternal(silent) {
 }
 
 // 拉取云端 → 覆盖本地。默认情况下，本地有未上传数据时直接跳过。
-// forceOverwrite = true 时强制覆盖（用户主动点“覆盖本机” / 新设备首次登录 / 导入 JSON 后）。
+// forceOverwrite = true 时强制覆盖（用户主动点“覆盖本机” / 新打开 / 登录 / 导入 JSON 后）。
 async function doCoverLocalInternal(forceOverwrite) {
   if (!forceOverwrite && window.__hasUnsavedChanges) {
     console.warn('[同步] 本地有未上传数据，已跳过云端覆盖');
@@ -25130,6 +25155,7 @@ async function doCoverLocalInternal(forceOverwrite) {
 
   // 覆盖成功后：本地 = 云端，不再有未上传
   window.__hasUnsavedChanges = false;
+  setPendingFlag(false);
   __uploadRetryCount = 0;
   if (__uploadRetryTimer) { clearTimeout(__uploadRetryTimer); __uploadRetryTimer = null; }
 
@@ -25193,6 +25219,7 @@ async function doCoverCloud() {
   if (!currentUser) return alert('请先登录！');
   if (!confirm('⚠️ 警告：这会把本机的所有数据（订单、单主、设置）覆盖云端。\n\n确定继续吗？')) return;
   window.__hasUnsavedChanges = true;
+  setPendingFlag(true);
   await doCoverCloudInternal();
   showPage('pageAccount');
 }
@@ -25327,49 +25354,9 @@ async function submitAuthForm() {
   }
 }
 
-/* ══════════ 登录后的同步：本地优先 ══════════ */
+/* ══════════ 登录后的同步：走统一入口 ══════════ */
 async function handlePostLoginSync() {
-  showToast('正在检查云端数据...', 2000);
-
-  // 1. 查云端有没有数据
-  let cloudData = null;
-  let retries = 0;
-  while (!cloudData && retries < 6) {
-    const { data, error } = await supabaseClient.from('user_data').select('id').limit(1).maybeSingle();
-    if (data) { cloudData = data; break; }
-    await new Promise(r => setTimeout(r, 500));
-    retries++;
-  }
-
-  // 2. 判断本机算不算“新设备”：本机有没有历史数据
-  const localHasData = (function () {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.indexOf('listReceipt') === 0
-          && k !== 'listReceiptAutoSync'
-          && k !== 'listReceiptLastSyncTime'
-          && k !== 'lastLocalModifyTime') {
-        const raw = localStorage.getItem(k);
-        if (raw && raw !== '[]' && raw !== '{}' && raw !== 'null' && raw !== '""') return true;
-      }
-    }
-    return false;
-  })();
-
-  // 3. 决策
-  //   - 云端有数据 + 本机无数据（新设备）→ 从云端拉取
-  //   - 本机有数据 → 上传（本地优先，覆盖云端）
-  //   - 都无数据 → 什么都不做
-  if (cloudData && !localHasData) {
-    showToast('检测到云端备份，正在同步到本机...', 3000);
-    await doCoverLocalInternal(true);
-  } else if (localHasData) {
-    showToast('本机有数据，正在上传到云端...', 3000);
-    window.__hasUnsavedChanges = true;
-    await doCoverCloudInternal();
-  } else {
-    showToast('已登录。当前本机和云端都没有数据。', 3000);
-  }
+  await handleStartupSync(true);
 }
 
 async function doAccountLogout() {
@@ -25434,42 +25421,148 @@ async function submitForgotPassword() {
   }
 }
 /* ═══════════════════════════════════════════════════════
-   [切屏 / 加载] 只上传，不拉取
+   [启动 / 登录 / 切屏] 统一同步逻辑
    ═══════════════════════════════════════════════════════ */
 
-// 页面加载 / 切回时：如果本地有未上传数据 → 上传；否则什么都不做。
-// 本地优先：绝不用云端覆盖本地。
-async function checkAndSyncOnLoad() {
+// 判断本次页面加载是不是“新打开”（关标签页 / 关浏览器再打开）
+// 刷新（F5）、后退、前进 都不算“新打开”
+function isNewPageOpen() {
+  try {
+    const entries = performance.getEntriesByType('navigation');
+    if (entries && entries.length > 0) {
+      return entries[0].type === 'navigate';
+    }
+    if (window.performance && performance.navigation) {
+      return performance.navigation.type === 0; // TYPE_NAVIGATE
+    }
+  } catch (e) {}
+  return false;
+}
+
+// 统一入口：新打开 / 登录 都走这里
+async function handleStartupSync(isNewOpen) {
   if (!initCloud()) return;
   const { data: { session } } = await supabaseClient.auth.getSession();
   if (!session) return;
   currentUser = session.user;
 
-  if (window.__hasUnsavedChanges) {
-    await commitSyncNow(true);
+  // 有未上传数据
+  if (hasPendingFlag() || window.__hasUnsavedChanges) {
+    window.__hasUnsavedChanges = true;
+    setPendingFlag(true);
+    if (isNewOpen) {
+      // 新打开 / 登录：弹窗询问用户
+      showPendingUploadPrompt();
+    } else {
+      // 刷新 / 切屏：静默重试上传
+      await commitSyncNow(true);
+    }
+    return;
+  }
+
+  // 新打开 + 无未上传 → 拉云端覆盖本地
+  if (isNewOpen) {
+    try {
+      const { data } = await supabaseClient.from('user_data').select('id').limit(1).maybeSingle();
+      if (data) {
+        showToast('正在同步云端最新数据...', 2000);
+        await doCoverLocalInternal(true);
+      } else {
+        showToast('云端暂无备份数据。', 3000);
+      }
+    } catch (e) {
+      console.warn('[启动同步] 拉云端失败', e);
+    }
+  }
+  // 刷新 / 切屏 + 无未上传 → 什么都不做
+}
+
+// 弹窗：询问用户“上次数据未上传，是否上传”
+function showPendingUploadPrompt() {
+  (async function () {
+    let cloudHasData = false;
+    try {
+      if (supabaseClient) {
+        const { data } = await supabaseClient.from('user_data').select('id').limit(1).maybeSingle();
+        cloudHasData = !!data;
+      }
+    } catch (e) {}
+
+    const modalHtml = `
+      <div class="modal-overlay">
+        <div class="modal" onclick="event.stopPropagation()">
+          <div class="modal-head">
+            <h3>上次操作未成功上传</h3>
+          </div>
+          <div class="modal-body">
+            <p style="margin:8px 0;line-height:1.7;">
+              检测到上次有操作没有成功上传到云端。<br>
+              请选择如何处理：
+            </p>
+            <p style="font-size:12px;color:var(--ink-soft);margin:0 0 16px;line-height:1.8;">
+              ${cloudHasData ? '云端已有备份数据。' : '云端暂无备份数据。'}<br>
+              · 上传本地 = 用本地最新数据覆盖云端<br>
+              · 不上传 = 丢弃本地未上传数据，从云端拉取
+            </p>
+            <div class="actions" style="justify-content:flex-end;gap:10px;flex-wrap:wrap;">
+              <button class="action-btn ghost" onclick="onPendingUploadChoice(false)">不上传，拉取云端</button>
+              <button class="action-btn" onclick="onPendingUploadChoice(true)">上传本地覆盖云端</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('modalRoot').innerHTML = modalHtml;
+  })();
+}
+
+// 用户对“上次未上传”弹窗的选择
+async function onPendingUploadChoice(doUpload) {
+  document.getElementById('modalRoot').innerHTML = '';
+
+  if (doUpload) {
+    window.__hasUnsavedChanges = true;
+    setPendingFlag(true);
+    const ok = await commitSyncNow();
+    if (!ok) {
+      showToast('本地数据上传失败，已保留本地数据。网络恢复后会自动重试。', 5000);
+      return;
+    }
+  }
+
+  // 上传成功 或 用户选择不上传 → 拉云端
+  try {
+    const { data } = await supabaseClient.from('user_data').select('id').limit(1).maybeSingle();
+    if (data) {
+      showToast('正在同步云端最新数据...', 2000);
+      await doCoverLocalInternal(true);
+    } else {
+      showToast('云端暂无数据。', 3000);
+    }
+  } catch (e) {
+    console.warn('[启动同步] 拉云端失败', e);
   }
 }
 
-// 切屏处理：
-//   - 到后台 → 有未上传数据就尽力传一次
-//   - 回到前台 → 有未上传数据就立即传，没数据就什么都不做
+// 页面加载时（新打开/刷新）执行
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    handleStartupSync(isNewPageOpen());
+  }, 1000);
+});
+
+// 切屏处理：回来不拉云端，只检查 pending
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    checkAndSyncOnLoad();
+    if (window.__hasUnsavedChanges && currentUser) {
+      commitSyncNow(true);
+    }
   } else {
     if (window.__hasUnsavedChanges && currentUser) {
       doCoverCloudInternal(true);
     }
   }
 });
-
-// 页面加载：只检查本地未上传，不拉云端
-window.addEventListener('load', () => {
-  setTimeout(checkAndSyncOnLoad, 1000);
-});
-
-// 注意：原来的 window.focus 监听会拉云端，已移除。
-// 刷新页面也不拉云端，保持本地数据。
 /* ═══════════════════════════════════════════════════════
    [图片清理机制] 删除素材图和要求图，释放云端空间
    ═══════════════════════════════════════════════════════ */
