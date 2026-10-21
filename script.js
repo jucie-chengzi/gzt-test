@@ -7135,14 +7135,17 @@ function captureReceiptFormSnapshot() {
   });
 
   return {
+    // ★ 核心字段：一个都不能少
+    client:       $('client')       ? $('client').value       : '',
+    platform:     $('platform')     ? $('platform').value     : '',
+    artistId:     $('artistId')     ? $('artistId').value     : '',
+    artistIdentity: $('artistIdentity') ? $('artistIdentity').value : '',
     orderDate:    $('orderDate')    ? $('orderDate').value    : '',
     scheduleDate: $('scheduleDate') ? $('scheduleDate').value : '',
     workDays:     $('workDays')     ? $('workDays').value     : '',
     project:      $('project')      ? $('project').value      : '',
     ip:           $('ip')           ? $('ip').value           : '',
     attribute:    $('attribute')    ? $('attribute').value    : '',
-    artistIdentity: $('artistIdentity') ? $('artistIdentity').value : '',
-    artistId:       $('artistId')       ? $('artistId').value       : '',
     character:    $('character')    ? $('character').value    : '',
     depositMode:  $('depositMode')  ? $('depositMode').value  : 'percent',
     deposit:      $('deposit')      ? $('deposit').value      : '20',
@@ -7167,35 +7170,28 @@ function captureReceiptFormSnapshot() {
 function restoreReceiptFormSnapshot(snap) {
   if (!snap) return;
 
-  /* 基础信息 */
+  // ★ 基础信息全面恢复
+  if ($('client'))       $('client').value       = snap.client       || '';
+  if ($('platform'))     $('platform').value     = snap.platform     || '';
+  if ($('artistId'))     $('artistId').value     = snap.artistId     || getSavedArtistName();
+  if ($('artistIdentity')) $('artistIdentity').value = snap.artistIdentity || getDefaultIdentity();
   if ($('orderDate'))    $('orderDate').value    = snap.orderDate    || '';
   if ($('scheduleDate')) $('scheduleDate').value = snap.scheduleDate || '';
   if ($('workDays'))     $('workDays').value     = snap.workDays     || '';
   if ($('project'))      $('project').value      = snap.project      || '';
   if ($('ip'))           $('ip').value           = snap.ip           || '';
   if ($('attribute'))    $('attribute').value    = snap.attribute    || '';
-
-  /* 画师/美工（老订单快照没有这两个字段 → 回退到设置里的值） */
-  if ($('artistIdentity')) {
-    $('artistIdentity').value = snap.artistIdentity || getDefaultIdentity();
-  }
-  if ($('artistId')) {
-    $('artistId').value = snap.artistId || getSavedArtistName();
-  }
   if ($('character'))    $('character').value    = snap.character    || '';
   if ($('depositMode'))  $('depositMode').value  = snap.depositMode  || 'percent';
   if ($('deposit'))      $('deposit').value      = (snap.deposit !== undefined && snap.deposit !== '') ? snap.deposit : '20';
   if ($('placeholderToggle')) $('placeholderToggle').checked = !!snap.placeholder;
+  
   updateDepositUnit();
 
-  if (typeof setDepositModeLocked === 'function') {
-    setDepositModeLocked(!!snap.placeholder);
-  }
-  if (typeof applyPlaceholderMode === 'function') {
-    applyPlaceholderMode(!!snap.placeholder);
-  }
+  if (typeof setDepositModeLocked === 'function') setDepositModeLocked(!!snap.placeholder);
+  if (typeof applyPlaceholderMode === 'function') applyPlaceholderMode(!!snap.placeholder);
 
-  /* 稿件组 */
+  // 稿件组
   const gContainer = $('groupsContainer');
   if (gContainer) gContainer.innerHTML = '';
 
@@ -7234,7 +7230,6 @@ function restoreReceiptFormSnapshot(snap) {
     (g.extras || []).forEach(ex => addGroupExtra(gb, ex));
     (g.discounts || []).forEach(dc => addGroupDiscount(gb, dc));
 
-    /* 恢复组服务费 */
     if (g.serviceFee) {
       gb.dataset.serviceFee = JSON.stringify(g.serviceFee);
     } else {
@@ -7243,7 +7238,7 @@ function restoreReceiptFormSnapshot(snap) {
     if (typeof updateGroupServiceDisplay === 'function') updateGroupServiceDisplay(gb);
   });
 
-  /* 订单级附加 / 优惠 / 赠品 */
+  // 订单级附加 / 优惠 / 赠品
   const ec = $('extrasContainer');
   if (ec) ec.innerHTML = '';
   (snap.extras || []).forEach(ex => addExtra(ex));
@@ -7265,7 +7260,7 @@ function restoreReceiptFormSnapshot(snap) {
     if (gvEl) gvEl.value = g.value || '';
   });
 
-  /* 预览图 */
+  // 预览图
   const ref = snap.previewImage || '';
   previewImageData = ref;
 
@@ -7281,17 +7276,17 @@ function restoreReceiptFormSnapshot(snap) {
     if ($('previewBox')) $('previewBox').classList.remove('show');
   }
 
-  /* 标签 */
+  // 标签
   window.__receiptTags = (snap.receiptTags || []).slice();
   updateReceiptTagBtn();
 
-  /* 定金开关 */
+  // 定金开关
   if ($('depositEnabled')) {
     $('depositEnabled').checked = (snap.depositEnabled === undefined) ? true : !!snap.depositEnabled;
   }
   if (typeof updateDepositInputDisabled === 'function') updateDepositInputDisabled();
 
-  /* 预付配置 */
+  // 预付配置
   if (snap.prepaidConfig) {
     setPrepaidConfig(JSON.parse(JSON.stringify(snap.prepaidConfig)));
   } else {
@@ -7299,7 +7294,7 @@ function restoreReceiptFormSnapshot(snap) {
   }
   if (typeof updatePrepaidBtnState === 'function') updatePrepaidBtnState();
 
-  /* 订单级服务费 */
+  // 订单级服务费
   if (snap.orderServiceFee) {
     setOrderServiceFeeConfig(JSON.parse(JSON.stringify(snap.orderServiceFee)));
   } else {
@@ -8670,18 +8665,23 @@ async function confirmFinalSettle() {
     t.receiptImage = finalReceiptRef; // 更新为最新
   }
 
-  /* 记尾款流水（负尾款 → 退款流水） */
-  if (s.finalAmount > 0) {
-    addFlow('final', s.finalAmount, '尾款 · ' + (t.clientName || '未命名'), today, {
-      todoId: t.id,
-      completedId: completed.id,
-    });
-  } else if (s.finalAmount < 0) {
-    addFlow('refund', Math.abs(s.finalAmount), '结单退款 · ' + (t.clientName || '未命名'), today, {
-      todoId: t.id,
-      completedId: completed.id,
-    });
-  }
+      /* ★ 核心修复：把预付款和尾款合并成一条“总实收”流水，彻底杜绝统计遗漏 */
+    // 1. 先删除该订单之前残留的预付款和排单费流水
+    removeFlowsByTodoIdAndType(t.id, 'prepaid');
+    removeFlowsByTodoIdAndType(t.id, 'dispatch');
+
+    // 2. 写入一条包含总实收的流水（总实收 = 预付款 + 尾款）
+    if (s.totalReceived > 0) {
+      addFlow('final', s.totalReceived, '实收（预付款+尾款） · ' + (t.clientName || '未命名'), today, {
+        todoId: t.id,
+        completedId: completed.id,
+      });
+    } else if (s.totalReceived < 0) {
+      addFlow('refund', Math.abs(s.totalReceived), '结单退款 · ' + (t.clientName || '未命名'), today, {
+        todoId: t.id,
+        completedId: completed.id,
+      });
+    }
 
   /* ★ 新增：清理该订单的素材和要求图片（释放云端空间） */
   cleanupOrderImages(t).catch(e => console.warn(e));
@@ -8748,11 +8748,39 @@ async function generateFinalReceipt(todo, settleState) {
     if (todo.receiptSnapshot) {
       restoreReceiptFormSnapshot(todo.receiptSnapshot);
     }
+
+    // ★ 终极锁死：把订单的真实数据逐个覆盖，绝不让小票页残留数据污染结单小票
+    if ($('client'))         $('client').value         = todo.clientId || '';
+    if ($('artistId'))       $('artistId').value       = (todo.receiptSnapshot && todo.receiptSnapshot.artistId) || todo.artistId || getSavedArtistName();
+    if ($('artistIdentity')) $('artistIdentity').value = (todo.receiptSnapshot && todo.receiptSnapshot.artistIdentity) || getDefaultIdentity();
+    if ($('platform'))       $('platform').value       = todo.platform || '';
+    if ($('orderDate'))      $('orderDate').value      = todo.orderDate || '';
+    if ($('scheduleDate'))   $('scheduleDate').value   = todo.scheduleDate || '';
+    if ($('deadline'))       $('deadline').value       = todo.deadline || '';
+    
+    // ★ 锁定编号：确保结单小票的编号和订单编号完全一致，不被页面残留重新生成
+    window.__currentOrderNo = todo.orderNo || makeOrderNo(todo.orderDate);
+    window.__editingTodoId = todo.id;
+
     const layout = $('receiptLayout');
     if (layout) layout.classList.remove('settings-open');
 
     /* 2. 调 generate 让 DOM 与数据同步 */
     try { generate(); } catch (e) { console.warn('generate 失败', e); }
+        // ★ 核心修复：在 generate() 执行之后修改，就不会被覆盖了！
+    let deadlineValueEl = $('outDeadline');
+    if (deadlineValueEl) {
+      const parentRow = deadlineValueEl.closest('div');
+      if (parentRow) {
+        const spans = parentRow.querySelectorAll('span');
+        if (spans.length >= 2) {
+          if (spans[0].textContent.indexOf('截稿日期') > -1) {
+            spans[0].textContent = '交稿日期';
+          }
+        }
+      }
+      deadlineValueEl.textContent = fmtDateStr(new Date());
+    }
 
     /* 3. 等一帧 */
     await new Promise(r => requestAnimationFrame(r));
@@ -8866,6 +8894,23 @@ async function generateFinalReceipt(todo, settleState) {
       restoreReceiptFormSnapshot(backupSnap);
       window.__editingTodoId = backupEditingId;
       window.__currentOrderNo = backupOrderNo;
+
+      // ★ 恢复：“交稿日期”改回“截稿日期”
+      let deadlineLabelEl = null;
+      let deadlineValueEl = $('outDeadline');
+      if (deadlineValueEl) {
+        const parentRow = deadlineValueEl.closest('div');
+        if (parentRow) {
+          const spans = parentRow.querySelectorAll('span');
+          if (spans.length >= 2) {
+            deadlineLabelEl = spans[0];
+            if (deadlineLabelEl.textContent.indexOf('交稿日期') > -1) {
+              deadlineLabelEl.textContent = '截稿日期';
+            }
+          }
+        }
+      }
+
       try { generate(); } catch (e) {}
     } catch (e) {}
 
@@ -24631,6 +24676,9 @@ function finalizeFontDot() {
   /* 2. 自动迁移老数据 */
   await autoMigrateOnStartup();
 
+  /* ★ 新增：自动修复所有用户的历史实收流水（修复完会自动停止，绝不重复跑） */
+  autoFixHistoricalFlows();
+
   /* 3. 初始化排单 / 统计 */
   initScheduleModule();
   initStatsModule();
@@ -24824,36 +24872,114 @@ function onAutoSyncToggle() {
   }
 }
 
+// ============================================================
+// [同步核心 v2] 本地优先 + 完整操作立即上传 + 失败真重试
+// ============================================================
+
+// 是否有"完整操作产生、但还没上传成功"的本地数据
+window.__hasUnsavedChanges = false;
+// 打字中标记（input 打字时为 true，click 时清空）
+window.__isTyping = false;
+// 打字停止计时器
+let __typingTimer = null;
+// 合并窗口（把同一次操作里的多次写入合并为一次上传）
+let __commitTimer = null;
+// 批量写入模式（数据修复时用，期间不触发上传）
+window.__batchWriteMode = false;
+
+// 这些页面上的写入不上传（编辑中）
+const SYNC_SKIP_PAGES = ['pageReceipt', 'pageBasicSetting', 'pagePriceListSettings'];
+
+function isSyncSkippedPage() {
+  const cur = document.querySelector('.page.active');
+  if (!cur) return false;
+  return SYNC_SKIP_PAGES.indexOf(cur.id) > -1;
+}
+
+function canSyncNow() {
+  return !!(currentUser && isAutoSyncEnabled() && !window.__batchWriteMode && !isSyncSkippedPage());
+}
+
+// 所有"数据发生变化"的入口
 function triggerAutoSync() {
   if (!currentUser || !isAutoSyncEnabled()) return;
-  
-  // ★ 核心策略：在“基础信息页”和“小票填写页”时，禁止触发自动同步。
-  // 这些页面只有用户点击“保存”或“导入订单”时，才会手动调用 doCoverCloudInternal() 同步。
-  const currentActivePage = document.querySelector('.page.active');
-  if (currentActivePage) {
-    const pageId = currentActivePage.id;
-    if (pageId === 'pageBasicSetting' || pageId === 'pageReceipt') {
-      // 记入待同步状态，不触发网络请求
-      window.__syncPending = true;
-      return; 
-    }
-  }
+  if (window.__batchWriteMode) return;
+
+  // 编辑中的打字：不上传
+  if (window.__isTyping) return;
+
+  // 编辑页：不上传（等用户点保存时再传）
+  if (isSyncSkippedPage()) return;
+
+  // 到这里说明是一次"完整操作"
+  window.__hasUnsavedChanges = true;
 
   const statusEl = document.getElementById('syncStatusText');
   if (statusEl) statusEl.innerText = '有更新，待上传...';
 
-  if (autoSyncTimer) clearTimeout(autoSyncTimer);
-  autoSyncTimer = setTimeout(async () => {
-    if (statusEl) statusEl.innerText = '正在自动上传...';
-    await doCoverCloudInternal();
-  }, 5000);
+  if (__commitTimer) clearTimeout(__commitTimer);
+  __commitTimer = setTimeout(() => {
+    __commitTimer = null;
+    commitSyncNow();
+  }, 300);
 }
 
-// ★ 劫持本地存储，任何修改都会触发自动同步
+// 立即上传（无延迟，等云端真写完才算成功）
+async function commitSyncNow(silent) {
+  if (!canSyncNow()) return;
+  await doCoverCloudInternal(silent);
+}
+
+// 全局监听：输入 → 进入"打字中"
+document.addEventListener('input', function (e) {
+  const t = e.target;
+  if (!t) return;
+  const tag = t.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+    if (t.type === 'file') return;
+    window.__isTyping = true;
+    if (__typingTimer) clearTimeout(__typingTimer);
+    __typingTimer = setTimeout(() => {
+      window.__isTyping = false;
+      __typingTimer = null;
+    }, 8000);
+  }
+}, true);
+
+// 全局监听：点击按钮 → 退出"打字中"
+document.addEventListener('click', function (e) {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  const btn = t.closest('button, a, [role="button"], .upload-btn, .pick-btn, .td-mini-btn');
+  if (!btn) return;
+  if (__typingTimer) { clearTimeout(__typingTimer); __typingTimer = null; }
+  window.__isTyping = false;
+}, true);
+
+// 全局监听：指针抬起（拖拽排序结束）→ 退出"打字中"
+document.addEventListener('pointerup', function () {
+  if (window.__isTyping) {
+    window.__isTyping = false;
+    if (__typingTimer) { clearTimeout(__typingTimer); __typingTimer = null; }
+  }
+}, true);
+
+// 网络恢复：真的重试上传
+window.addEventListener('online', function () {
+  if (window.__hasUnsavedChanges && currentUser) {
+    showToast('网络已恢复，正在自动上传...', 3000);
+    commitSyncNow();
+  }
+});
+
+// 劫持 localStorage.setItem：所有写入都经过 triggerAutoSync
 const originalSetItem = localStorage.setItem;
 localStorage.setItem = function(key, value) {
   originalSetItem.apply(this, [key, value]);
-  if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync' && key !== 'listReceiptLastSyncTime') {
+  if (key && key.indexOf('listReceipt') === 0
+      && key !== 'listReceiptAutoSync'
+      && key !== 'listReceiptLastSyncTime'
+      && key !== 'lastLocalModifyTime') {
     triggerAutoSync();
   }
 };
@@ -24867,79 +24993,101 @@ function updateSyncStatusUI() {
   }
 }
 
-/* ══════════ 核心同步逻辑（内部静默版） ══════════ */
-let isUploading = false; // ★ 增加并发锁
+/* ══════════ 核心同步逻辑（v2 · 本地优先） ══════════ */
+let __isUploading = false;    // 上传中锁
+let __uploadRetryCount = 0;   // 失败重试次数
+let __uploadRetryTimer = null;
 
-async function doCoverCloudInternal() {
-  if (!currentUser) return;
-  if (isUploading) return; // 并发锁
-  isUploading = true;
+// 上传：等云端真写完，才清除 __hasUnsavedChanges 并提示成功
+async function doCoverCloudInternal(silent) {
+  if (!currentUser) return false;
+  if (!supabaseClient) return false;
+  if (__isUploading) return false;
 
+  __isUploading = true;
+  const statusEl = document.getElementById('syncStatusText');
+  if (statusEl && !silent) statusEl.innerText = '正在上传...';
+
+  let uploadError = null;
   try {
-    // 记录本地操作时间，防止同步时被云端覆盖
     originalSetItem.call(localStorage, 'lastLocalModifyTime', Date.now().toString());
 
     const { data: { session } } = await supabaseClient.auth.getSession();
-    if (!session) { isUploading = false; return; }
+    if (!session) { __isUploading = false; return false; }
     currentUser = session.user;
 
     const lsData = {};
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && key.indexOf('listReceipt') === 0 && key !== 'listReceiptAutoSync' && key !== 'listReceiptLastSyncTime' && key !== 'lastLocalModifyTime') {
+      if (key && key.indexOf('listReceipt') === 0
+          && key !== 'listReceiptAutoSync'
+          && key !== 'listReceiptLastSyncTime'
+          && key !== 'lastLocalModifyTime') {
         const raw = localStorage.getItem(key);
         if (raw) {
-          try { 
+          try {
             let parsed = JSON.parse(raw);
             if (typeof parsed === 'string') parsed = parsed.replace(/^"|"$/g, '');
-            lsData[key] = parsed; 
+            lsData[key] = parsed;
           } catch (e) { lsData[key] = raw; }
         }
       }
     }
 
-        const payload = { data: lsData, updatedAt: Date.now() };
-    
-    // ★ 终极完美修复：使用 upsert（有则更新，无则插入）。
-    // 这样不仅云端永远只有 1 行数据，而且不会出现“删除后插入失败导致数据丢失”的风险，绝对安全。
+    const payload = { data: lsData, updatedAt: Date.now() };
     const { error } = await supabaseClient
       .from('user_data')
       .upsert(
-        { user_id: session.user.id, data: payload, updated_at: new Date().toISOString() }, 
+        { user_id: session.user.id, data: payload, updated_at: new Date().toISOString() },
         { onConflict: 'user_id' }
       );
 
-    if (error) {
-      console.warn('自动同步被暂时拒绝 (RLS)，5秒后自动重试...', error.message);
-      const statusEl = document.getElementById('syncStatusText');
-      if (statusEl) statusEl.innerText = '同步重试中...';
-      
-      isUploading = false;
-      setTimeout(() => { doCoverCloudInternal(); }, 5000);
-      return;
-    }
+    if (error) { uploadError = error; console.warn('[同步] 上传失败：', error.message); }
+  } catch (e) {
+    uploadError = e;
+    console.warn('[同步] 上传异常：', e);
+  } finally {
+    __isUploading = false;
+  }
 
+  // 云端真的写成功 → 清标记、提示成功
+  if (!uploadError) {
+    window.__hasUnsavedChanges = false;
+    __uploadRetryCount = 0;
+    if (__uploadRetryTimer) { clearTimeout(__uploadRetryTimer); __uploadRetryTimer = null; }
     originalSetItem.call(localStorage, 'listReceiptLastSyncTime', Date.now().toString());
     updateSyncStatusUI();
-    showToast('✅ 自动同步成功！', 3000);
-    const statusEl = document.getElementById('syncStatusText');
     if (statusEl) statusEl.innerText = '已同步';
-
-  } catch (e) {
-    console.error('自动同步异常', e);
-  } finally {
-    isUploading = false;
+    if (!silent) showToast('✅ 云端同步成功！', 3000);
+    return true;
   }
+
+  // 失败：保留未上传标记，退避重试（5s / 10s / 20s / 40s / 60s）
+  window.__hasUnsavedChanges = true;
+  if (statusEl) statusEl.innerText = '同步失败，待重试...';
+  if (!silent) showToast('⚠️ 已保存到本地，云端暂未同步。网络恢复后会自动上传。', 5000);
+
+  const delayList = [5000, 10000, 20000, 40000, 60000];
+  const delay = delayList[Math.min(__uploadRetryCount, delayList.length - 1)];
+  __uploadRetryCount++;
+  if (__uploadRetryTimer) clearTimeout(__uploadRetryTimer);
+  __uploadRetryTimer = setTimeout(() => {
+    __uploadRetryTimer = null;
+    if (window.__hasUnsavedChanges && currentUser) {
+      doCoverCloudInternal(true);
+    }
+  }, delay);
+  return false;
 }
 
-// ★ 核心修复：不仅拉取数据，还要强制刷新所有界面元素（不再需要 F5）
-async function doCoverLocalInternal() {
-    // ★ 防回滚护栏：如果本地 15 秒内有过修改，说明用户正在操作，拒绝从云端覆盖本地的拉取！
-  const lastMod = localStorage.getItem('lastLocalModifyTime');
-  if (lastMod && Date.now() - Number(lastMod) < 15000) {
-    console.warn('本地有新鲜操作，已跳过此次云端覆盖');
+// 拉取云端 → 覆盖本地。默认情况下，本地有未上传数据时直接跳过。
+// forceOverwrite = true 时强制覆盖（用户主动点“覆盖本机” / 新设备首次登录 / 导入 JSON 后）。
+async function doCoverLocalInternal(forceOverwrite) {
+  if (!forceOverwrite && window.__hasUnsavedChanges) {
+    console.warn('[同步] 本地有未上传数据，已跳过云端覆盖');
     return;
   }
+
   let session = null;
   let retries = 0;
   while (!session && retries < 5) {
@@ -24952,7 +25100,6 @@ async function doCoverLocalInternal() {
     await new Promise(r => setTimeout(r, 300));
     retries++;
   }
-  
   if (!session) { showToast('登录状态未完全就绪，请稍后再试'); return; }
 
   const { data, error } = await supabaseClient
@@ -24981,10 +25128,13 @@ async function doCoverLocalInternal() {
     }
   }
 
+  // 覆盖成功后：本地 = 云端，不再有未上传
+  window.__hasUnsavedChanges = false;
+  __uploadRetryCount = 0;
+  if (__uploadRetryTimer) { clearTimeout(__uploadRetryTimer); __uploadRetryTimer = null; }
+
   requestAnimationFrame(() => {
     showToast('✅ 数据同步成功！正在刷新页面内容...', 3000);
-    
-    // 刷新主模块
     if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderMasterList === 'function') renderMasterList();
     if (typeof renderSchedule === 'function') renderSchedule();
@@ -24993,10 +25143,8 @@ async function doCoverLocalInternal() {
     if (typeof renderCancelledList === 'function') renderCancelledList();
     if (typeof renderDiscardedList === 'function') renderDiscardedList();
 
-    // ★ 核心修复：补上漏掉的「身份预设列表」刷新！让它瞬间变成最新值，无需刷新页面！
     if (typeof renderIdentityList === 'function') renderIdentityList();
 
-    // 强制重绘身份下拉框和ID输入框
     const newIdentity = localStorage.getItem('listReceiptDefaultIdentity') || '画师';
     const newArtistName = localStorage.getItem('listReceiptArtistName') || '';
     const identities = getIdentities();
@@ -25006,23 +25154,20 @@ async function doCoverLocalInternal() {
       identitySel.innerHTML = identities.map(n => `<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
       identitySel.value = newIdentity;
     }
-    
     const setNameInput = document.getElementById('setName');
     if (setNameInput) setNameInput.value = newArtistName;
 
-    // 刷新小票页的画师美工
     if (typeof renderArtistIdentitySelect === 'function') renderArtistIdentitySelect();
     const artistIdentitySel = document.getElementById('artistIdentity');
     if (artistIdentitySel) artistIdentitySel.value = newIdentity;
     const artistIdInput = document.getElementById('artistId');
     if (artistIdInput) artistIdInput.value = newArtistName;
 
-    // 刷新权限、平台、定金预设
     if (typeof renderPermissionList === 'function') renderPermissionList();
     if (typeof syncPermissionsToMain === 'function') syncPermissionsToMain();
     if (typeof renderSetPlatformSelect === 'function') renderSetPlatformSelect();
     if (typeof syncPlatformsToMain === 'function') syncPlatformsToMain();
-    
+
     if (typeof getDepositPreset === 'function') {
       const dp = getDepositPreset();
       if (document.getElementById('setDepositMode')) document.getElementById('setDepositMode').value = dp.mode;
@@ -25033,21 +25178,21 @@ async function doCoverLocalInternal() {
       if (typeof updateDepositUnit === 'function') updateDepositUnit();
     }
 
-    // 刷新小票外观与价目表
     if (typeof applyReceiptSettings === 'function') applyReceiptSettings();
     if (typeof renderPriceListSettingsForm === 'function') renderPriceListSettingsForm();
     if (typeof renderPriceListPreview === 'function') renderPriceListPreview();
 
-    if (document.getElementById('pageAccount').classList.contains('active')) {
+    if (document.getElementById('pageAccount') && document.getElementById('pageAccount').classList.contains('active')) {
       checkUserSession();
     }
   });
 }
 
-/* ══════════ 对外按钮（带确认框的手动同步） ══════════ */
+/* ══════════ 对外按钮（手动同步） ══════════ */
 async function doCoverCloud() {
   if (!currentUser) return alert('请先登录！');
   if (!confirm('⚠️ 警告：这会把本机的所有数据（订单、单主、设置）覆盖云端。\n\n确定继续吗？')) return;
+  window.__hasUnsavedChanges = true;
   await doCoverCloudInternal();
   showPage('pageAccount');
 }
@@ -25055,7 +25200,7 @@ async function doCoverCloud() {
 async function doCoverLocal() {
   if (!currentUser) return alert('请先登录！');
   if (!confirm('⚠️ 警告：这会把云端的数据拉到本机，并且覆盖本机所有当前数据。\n\n确定继续吗？')) return;
-  await doCoverLocalInternal();
+  await doCoverLocalInternal(true);
   showPage('pageAccount');
 }
 
@@ -25063,7 +25208,7 @@ async function doDataMerge(silent) {
   if (!currentUser) return alert('请先登录！');
   if (!silent && !confirm('⚠️ 数据合并会把云端和本机数据按时间戳合并，可能出现少量冲突。\n\n确定继续吗？')) return;
   if (!silent) showToast('数据合并功能将在后续版本升级。当前操作将执行“从云端拉取最新数据”。', 4000);
-  await doCoverLocalInternal();
+  await doCoverLocalInternal(true);
 }
 
 /* ══════════ 弹窗、登录、注册、退出相关 ══════════ */
@@ -25128,7 +25273,10 @@ async function submitAuthForm() {
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
 
-  if (!email || !password) { showAuthError('邮箱和密码不能为空！'); return; }
+  // 1. 明确的输入拦截提示，不让用户以为是网络问题
+  if (!email) { showAuthError('请填写邮箱！'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showAuthError('邮箱格式不正确！'); return; }
+  if (!password) { showAuthError('请填写密码！'); return; }
   if (password.length < 6) { showAuthError('密码不能少于 6 位！'); return; }
 
   const mode = window.__authMode;
@@ -25139,69 +25287,88 @@ async function submitAuthForm() {
 
   try {
     if (mode === 'login') {
+      // ============ 登录逻辑 ============
       const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
       if (error) {
-        if (error.message.indexOf('Invalid login credentials') > -1) showAuthError('该账号未注册，请先注册！');
+        if (error.message.indexOf('Invalid login credentials') > -1) showAuthError('该账号未注册或密码错误，请先注册！');
         else showAuthError('登录失败：' + error.message);
       } else {
-        closeAuthModal(); 
-        showToast('登录成功！');
+        closeAuthModal(); showToast('登录成功！');
         await checkUserSession();
-        // ★ 核心修复：登录成功后，立即执行静默检查并拉取，不再用 setTimeout 延迟！
         await handlePostLoginSync();
       }
     } else {
+      // ============ 注册逻辑 ============
       const { data, error } = await supabaseClient.auth.signUp({ email, password });
+      
       if (error) {
         if (error.message.indexOf('User already registered') > -1) showAuthError('该账号已注册，请直接登录！');
         else showAuthError('注册失败：' + error.message);
       } else {
         if (data.session) {
-          closeAuthModal(); 
-          showToast('注册成功！已自动登录。');
+          closeAuthModal(); showToast('注册成功！已自动登录。');
           await checkUserSession();
-          // ★ 核心修复：注册成功后，立即执行静默检查并拉取！
           await handlePostLoginSync();
-        } else showAuthError('该账号已注册，请直接登录！');
+        } else if (data.user && data.user.identities && data.user.identities.length === 0) {
+          showAuthError('该邮箱已经注册过了，请直接登录或找回密码！');
+        } else {
+          closeAuthModal();
+          alert('注册成功！请使用该邮箱和密码登录。');
+          openAuthModal('login');
+        }
       }
     }
   } catch (err) {
     showAuthError('网络请求失败，请检查网络！'); console.error('注册/登录异常：', err);
   } finally {
+    // ★ 核心优化：无论成功还是失败，只要请求结束，按钮必须解锁！
     btn.disabled = false;
     btn.innerText = mode === 'login' ? '登 录' : '注 册';
   }
 }
 
-/* ══════════ 登录后的智能同步逻辑（极简静默版） ══════════ */
+/* ══════════ 登录后的同步：本地优先 ══════════ */
 async function handlePostLoginSync() {
   showToast('正在检查云端数据...', 2000);
-  
+
+  // 1. 查云端有没有数据
   let cloudData = null;
   let retries = 0;
-  
-  // 最多重试6次（等待3秒），解决 Supabase 登录状态延迟导致的自动拉取失败！
   while (!cloudData && retries < 6) {
     const { data, error } = await supabaseClient.from('user_data').select('id').limit(1).maybeSingle();
-    if (data) {
-      cloudData = data;
-      break;
-    }
-    await new Promise(r => setTimeout(r, 500)); // 等500毫秒再试
+    if (data) { cloudData = data; break; }
+    await new Promise(r => setTimeout(r, 500));
     retries++;
   }
 
-  if (cloudData) {
-    // 找到云端数据，直接静默拉取，不弹框！
-    showToast('正在从云端同步数据到本机...', 3000);
-    await doCoverLocalInternal();
-  } else {
-    // 等了三秒还没数据，说明是全新用户
-    if (confirm('检测到您是本机首次登录，是否将本机当前数据上传到云端备份？\n\n选择“取消”则仅登录，不上传。')) {
-      await doCoverCloudInternal();
-    } else {
-      showToast('已跳过数据上传。数据仅保存在本机。', 3000);
+  // 2. 判断本机算不算“新设备”：本机有没有历史数据
+  const localHasData = (function () {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf('listReceipt') === 0
+          && k !== 'listReceiptAutoSync'
+          && k !== 'listReceiptLastSyncTime'
+          && k !== 'lastLocalModifyTime') {
+        const raw = localStorage.getItem(k);
+        if (raw && raw !== '[]' && raw !== '{}' && raw !== 'null' && raw !== '""') return true;
+      }
     }
+    return false;
+  })();
+
+  // 3. 决策
+  //   - 云端有数据 + 本机无数据（新设备）→ 从云端拉取
+  //   - 本机有数据 → 上传（本地优先，覆盖云端）
+  //   - 都无数据 → 什么都不做
+  if (cloudData && !localHasData) {
+    showToast('检测到云端备份，正在同步到本机...', 3000);
+    await doCoverLocalInternal(true);
+  } else if (localHasData) {
+    showToast('本机有数据，正在上传到云端...', 3000);
+    window.__hasUnsavedChanges = true;
+    await doCoverCloudInternal();
+  } else {
+    showToast('已登录。当前本机和云端都没有数据。', 3000);
   }
 }
 
@@ -25267,42 +25434,42 @@ async function submitForgotPassword() {
   }
 }
 /* ═══════════════════════════════════════════════════════
-   [多设备无缝同步] 页面激活时自动拉取云端最新数据
+   [切屏 / 加载] 只上传，不拉取
    ═══════════════════════════════════════════════════════ */
 
+// 页面加载 / 切回时：如果本地有未上传数据 → 上传；否则什么都不做。
+// 本地优先：绝不用云端覆盖本地。
 async function checkAndSyncOnLoad() {
   if (!initCloud()) return;
-  // 检查是否处于已登录状态
   const { data: { session } } = await supabaseClient.auth.getSession();
-  if (session) {
-    currentUser = session.user;
-    // 页面载入或切回时，静默拉取云端最新数据
-    // 注意：这里直接调 doCoverLocalInternal，不会弹框，不会打扰用户
-    await doCoverLocalInternal();
+  if (!session) return;
+  currentUser = session.user;
+
+  if (window.__hasUnsavedChanges) {
+    await commitSyncNow(true);
   }
 }
 
-// 场景1：用户直接打开网页（包含自动登录状态）
-window.addEventListener('load', () => {
-  // 延迟 1 秒执行，确保主项目所有的 render 函数已经初始化完毕
-  setTimeout(checkAndSyncOnLoad, 1000);
-});
-
-// 场景2：用户从别的 APP 切回浏览器（手机端极其常见）
+// 切屏处理：
+//   - 到后台 → 有未上传数据就尽力传一次
+//   - 回到前台 → 有未上传数据就立即传，没数据就什么都不做
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     checkAndSyncOnLoad();
+  } else {
+    if (window.__hasUnsavedChanges && currentUser) {
+      doCoverCloudInternal(true);
+    }
   }
 });
 
-// 场景3：用户按 F5 刷新页面（浏览器级别刷新）
-window.addEventListener('focus', () => {
-  // 避免频繁触发，加一个简单的防抖
-  if (window.__focusSyncTimer) clearTimeout(window.__focusSyncTimer);
-  window.__focusSyncTimer = setTimeout(() => {
-    checkAndSyncOnLoad();
-  }, 2000);
+// 页面加载：只检查本地未上传，不拉云端
+window.addEventListener('load', () => {
+  setTimeout(checkAndSyncOnLoad, 1000);
 });
+
+// 注意：原来的 window.focus 监听会拉云端，已移除。
+// 刷新页面也不拉云端，保持本地数据。
 /* ═══════════════════════════════════════════════════════
    [图片清理机制] 删除素材图和要求图，释放云端空间
    ═══════════════════════════════════════════════════════ */
@@ -25509,4 +25676,62 @@ function showAlgorithmFormulaModal() {
     </div>
   `;
   document.getElementById('modalRoot').innerHTML = html;
+}
+/* ═══════════════════════════════════════════════════════
+   [数据修复] 自动修复历史订单的实收流水
+   ═══════════════════════════════════════════════════════ */
+function autoFixHistoricalFlows() {
+  // 1. 检查是否已经修复过，每个浏览器只需跑一次，防止重复修复
+  if (localStorage.getItem('listReceiptFlowFixVersion') === 'v2') return;
+  
+  const completed = getCompleted();
+  let flows = getFlows();
+  let fixedCount = 0;
+
+  completed.forEach(c => {
+    const totalReceived = Number(c.totalReceived) || 0;
+    if (totalReceived <= 0) return;
+
+    // 查询这个订单目前的流水，判断是否需要修复
+    const related = flows.filter(f => f.completedId === c.id);
+    const finalFlows = related.filter(f => f.type === 'final');
+
+    let needsFix = false;
+    // 如果没有最终实收流水，或者金额对不上，就判定为需要修复
+    if (finalFlows.length !== 1) {
+      needsFix = true;
+    } else if (Math.abs(Number(finalFlows[0].amount) - totalReceived) > 0.01) {
+      needsFix = true;
+    }
+
+    if (needsFix) {
+      // 删掉该订单所有旧的错误流水（尾款、预付款、排班费等错误记录）
+      flows = flows.filter(f => f.completedId !== c.id);
+
+      // 重新生成一条正确的总实收流水
+      flows.push({
+        id: makeFlowId(),
+        type: 'final',
+        amount: totalReceived,
+        note: '实收（预付款+尾款） · ' + (c.clientName || '未命名') + ' [系统自动修复]',
+        date: c.completedDate || fmtDateStr(new Date()),
+        todoId: c.todoId || '',
+        completedId: c.id,
+        cancelledId: '',
+        discardedId: '',
+        createdAt: Date.now()
+      });
+      fixedCount++;
+    }
+  });
+
+  if (fixedCount > 0) {
+    setFlows(flows);
+    console.log('✅ 系统已自动修复 ' + fixedCount + ' 条历史订单的实收流水。');
+    // 刷新统计页面（如果当前在统计页，立刻生效）
+    if (typeof renderStatsPage === 'function') renderStatsPage();
+  }
+  
+  // 标记已修复，以后不再重复执行
+  localStorage.setItem('listReceiptFlowFixVersion', 'v2');
 }
