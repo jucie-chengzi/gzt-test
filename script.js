@@ -8666,7 +8666,9 @@ async function confirmFinalSettle() {
   cleanupOrderImages(t).catch(e => console.warn(e));
 
   /* 从待办移除 */
-  setTodos(todos.filter(x => x.id !== s.todoId));
+  // ★ 核心修复：重新获取最新的待办，防止在生成小票的几秒钟内产生的新订单被覆盖
+  const currentTodos = getTodos();
+  setTodos(currentTodos.filter(x => x.id !== s.todoId));
 
   window.__settleState = null;
   window.__settleFinalState = null;
@@ -25000,11 +25002,11 @@ function updateSyncStatusUI() {
   }
 }
 
-/* ══════════ 核心同步逻辑（v3 · 本地优先） ══════════ */
+/* ______________ 核心同步逻辑（v4 · 修复并发丢数据） ______________ */
 let __isUploading = false;    // 上传中锁
+let __uploadQueued = false;   // ★ 新增：排队标记，防止并发覆盖丢数据
 let __uploadRetryCount = 0;   // 失败重试次数
 let __uploadRetryTimer = null;
-
 // 递归扫描对象，把本地没传的图片补传云端，并替换成带云路径的引用
 async function replaceLocalImageRefs(obj) {
   if (!currentUser || !supabaseClient) return false;
@@ -25049,9 +25051,15 @@ async function replaceLocalImageRefs(obj) {
 async function doCoverCloudInternal(silent) {
   if (!currentUser) return false;
   if (!supabaseClient) return false;
-  if (__isUploading) return false;
+  
+  // ★ 核心修复：如果正在上传，标记为排队，不要直接丢弃！
+  if (__isUploading) {
+    __uploadQueued = true;
+    return false;
+  }
 
   __isUploading = true;
+  __uploadQueued = false; // 清空排队标记
   const statusEl = document.getElementById('syncStatusText');
   if (statusEl && !silent) statusEl.innerText = '正在上传...';
 
@@ -25108,6 +25116,12 @@ async function doCoverCloudInternal(silent) {
     console.warn('[同步] 上传异常：', e);
   } finally {
     __isUploading = false;
+    
+    // ★ 核心修复：上传完成后，如果发现有排队的任务，立刻再执行一次！
+    if (__uploadQueued && !uploadError) {
+      __uploadQueued = false;
+      setTimeout(() => doCoverCloudInternal(true), 100);
+    }
   }
 
   // 云端真的写成功 → 清标记、清 pending flag、提示成功
