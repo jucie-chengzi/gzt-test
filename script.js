@@ -25422,7 +25422,15 @@ function openAuthModal(mode) {
           <label>邮箱</label>
           <input type="email" id="authEmail" placeholder="填写邮箱" />
           <label>密码（至少6位）</label>
-          <input type="password" id="authPassword" placeholder="填写密码" />
+          <div class="password-input-wrap">
+            <input type="password" id="authPassword" placeholder="填写密码" />
+            <button type="button" class="password-eye-btn" onclick="togglePasswordVisibility('authPassword', this)" title="显示/隐藏密码">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
           <div class="actions" style="justify-content:center; margin-top:24px;">
             <button class="action-btn" style="width:100%;" id="authSubmitBtn" onclick="submitAuthForm()">${mode === 'login' ? '登 录' : '注 册'}</button>
           </div>
@@ -25445,6 +25453,21 @@ function openAuthModal(mode) {
 
 function closeAuthModal() { document.getElementById('modalRoot').innerHTML = ''; }
 
+// ★ 新增：切换密码可见状态
+function togglePasswordVisibility(inputId, btn) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  const isPassword = input.type === 'password';
+  input.type = isPassword ? 'text' : 'password';
+  
+  // 切换图标（闭眼/睁眼）
+  if (isPassword) {
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+  } else {
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+  }
+}
+
 function switchAuthMode() {
   if (window.__authMode === 'login') openAuthModal('register');
   else openAuthModal('login');
@@ -25452,17 +25475,54 @@ function switchAuthMode() {
 
 function showAuthError(msg) { document.getElementById('authModalError').innerText = msg; }
 
-/* ══════════ 核心验证与提交逻辑（强化防呆） ══════════ */
+/* ══════════ 核心验证与提交逻辑（极致防呆） ══════════ */
 async function submitAuthForm() {
   if (!initCloud()) return;
-  // ★ 核心优化：强制去掉前后的空格，防止手机自动加空格
-  const email = document.getElementById('authEmail').value.trim();
-  const password = document.getElementById('authPassword').value.trim();
+  const rawEmail = document.getElementById('authEmail').value;
+  const rawPassword = document.getElementById('authPassword').value;
+  
+  // 强制去掉前后的空格，防止手机自动加空格
+  const email = rawEmail.trim();
+  const password = rawPassword.trim();
 
-  // 1. 精确拦截
+  // ★ 1. 极致精细的邮箱格式校验
   if (!email) { showAuthError('请填写邮箱！'); return; }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showAuthError('邮箱格式不正确，请检查是否遗漏了 @ 或 .com'); return; }
+  
+  if (rawEmail !== email) {
+    showAuthError('邮箱前后不能有空格，请删除空格后重试！'); return;
+  }
+  
+  if (email.indexOf('@') === -1) {
+    if (/^\d+$/.test(email)) {
+      showAuthError('邮箱格式错误：不能只输入数字，需要加上后缀（如 @qq.com）'); return;
+    }
+    showAuthError('邮箱格式错误：缺少 @ 符号！'); return;
+  }
+
+  const parts = email.split('@');
+  if (parts.length > 2) {
+    showAuthError('邮箱格式错误：包含多个 @ 符号！'); return;
+  }
+  if (!parts[0]) {
+    showAuthError('邮箱格式错误：@ 前面必须要有内容！'); return;
+  }
+  if (!parts[1]) {
+    showAuthError('邮箱格式错误：@ 后面必须要有域名！'); return;
+  }
+  
+  if (parts[1].indexOf('.') === -1) {
+    showAuthError('邮箱格式错误：@ 后面缺少点号（如 .com 或 .cn）！'); return;
+  }
+
+  if (email.indexOf(' ') > -1) {
+    showAuthError('邮箱格式错误：不能包含空格！'); return;
+  }
+
+  // ★ 2. 密码校验
   if (!password) { showAuthError('请填写密码！'); return; }
+  if (rawPassword !== password) {
+    showAuthError('密码前后不能有空格，请检查！'); return;
+  }
   if (password.length < 6) { showAuthError('密码不能少于 6 位！'); return; }
 
   const mode = window.__authMode;
