@@ -1233,7 +1233,8 @@ window.addEventListener('beforeunload', releaseAllObjectURLs);
 async function saveImageBlob(blob, name) {
   if (!blob) return '';
 
-  // 1. 先保存在本地 IndexedDB
+  // ★ 核心优化：这里只做本地保存，不再在主线程里等云端上传！
+  // 云端上传交给同步模块的补传机制去后台静默处理，彻底解决导入订单卡顿！
   let localRef = '';
   if (!__idbAvailable) {
     localRef = await blobToDataURL(blob);
@@ -1253,30 +1254,6 @@ async function saveImageBlob(blob, name) {
     } catch (e) {
       console.warn('[IDB] 写入失败，降级 base64', e);
       localRef = await blobToDataURL(blob);
-    }
-  }
-
-  // 2. 如果已登录，同时把图片上传到云端 Supabase Storage
-  if (currentUser && supabaseClient) {
-    try {
-      // 生成一个独一无二的云路径，带上用户ID，保证隔离安全
-      const fileExt = blob.type === 'image/webp' ? 'webp' : 'png';
-      const cloudPath = `${currentUser.id}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
-
-      const { error } = await supabaseClient.storage
-        .from('images')
-        .upload(cloudPath, blob, { contentType: blob.type, upsert: true });
-
-      if (!error) {
-        // 上传成功，把云路径记在本地 IDB 里，方便以后去云上找
-        // 我们直接把云路径拼接到本地引用上，用双下划线隔开，方便解析
-        localRef = localRef + '__cloud__' + cloudPath;
-        console.log('图片成功上传到云端:', cloudPath);
-      } else {
-        console.warn('图片上传云端失败:', error.message);
-      }
-    } catch (err) {
-      console.warn('图片上传云端异常:', err);
     }
   }
 
@@ -7742,10 +7719,12 @@ async function importToTodo() {
   if (typeof renderStatsPage === 'function') renderStatsPage();
   if (typeof renderMasterList === 'function') renderMasterList();
   
-  // ★ 导入订单成功后，强制同步一次云端
-  if (typeof currentUser !== 'undefined' && currentUser && typeof doCoverCloudInternal === 'function') {
-    doCoverCloudInternal().catch(e => console.warn(e));
-  }
+  // ★ 优化：改为延迟 500ms 同步，避免与截图和 DOM 渲染抢夺主线程，解决卡顿
+  setTimeout(() => {
+    window.__hasUnsavedChanges = true;
+    setPendingFlag(true);
+    commitSyncNow();
+  }, 500);
   
   showPage('pageTodo');
 }
@@ -14330,7 +14309,12 @@ function confirmResetAllData() {
   } catch (e) {}
 
   /* 清空 IDB 图片 */
-  idbClearFiles().catch(() => {}).finally(() => {
+  idbClearFiles().catch(() => {}).finally(async () => {
+    if (typeof currentUser !== 'undefined' && currentUser) {
+      window.__hasUnsavedChanges = true;
+      setPendingFlag(true);
+      await commitSyncNow();
+    }
     alert('已恢复初始状态，页面将刷新。');
     location.reload();
   });
@@ -25021,6 +25005,46 @@ let __isUploading = false;    // 上传中锁
 let __uploadRetryCount = 0;   // 失败重试次数
 let __uploadRetryTimer = null;
 
+// 递归扫描对象，把本地没传的图片补传云端，并替换成带云路径的引用
+async function replaceLocalImageRefs(obj) {
+  if (!currentUser || !supabaseClient) return false;
+  let changed = false;
+  
+  async function traverse(o) {
+    if (typeof o === 'string') {
+      if (o.indexOf('file_') === 0 && o.indexOf('__cloud__') === -1) {
+        try {
+          const rec = await idbGetFile(o);
+          if (rec && rec.blob) {
+            const fileExt = rec.blob.type === 'image/webp' ? 'webp' : 'png';
+            const cloudPath = `${currentUser.id}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+            const { error } = await supabaseClient.storage.from('images').upload(cloudPath, rec.blob, { contentType: rec.blob.type, upsert: true });
+            if (!error) {
+              changed = true;
+              return o + '__cloud__' + cloudPath;
+            }
+          }
+        } catch(e) {}
+      }
+      return o;
+    }
+    if (Array.isArray(o)) {
+      for (let i = 0; i < o.length; i++) {
+        const res = await traverse(o[i]);
+        if (res !== o[i]) { o[i] = res; changed = true; }
+      }
+    } else if (o && typeof o === 'object') {
+      for (const k in o) {
+        const res = await traverse(o[k]);
+        if (res !== o[k]) { o[k] = res; changed = true; }
+      }
+    }
+    return o;
+  }
+  await traverse(obj);
+  return changed;
+}
+
 // 上传：等云端真写完，才清除 __hasUnsavedChanges 并提示成功
 async function doCoverCloudInternal(silent) {
   if (!currentUser) return false;
@@ -25056,6 +25080,19 @@ async function doCoverCloudInternal(silent) {
         }
       }
     }
+
+    // ★ 核心修复：上传前扫描并补传本地未同步的图片
+    if (statusEl && !silent) statusEl.innerText = '正在同步图片...';
+    for (const key in lsData) {
+      if (lsData[key] && typeof lsData[key] === 'object') {
+        const changed = await replaceLocalImageRefs(lsData[key]);
+        if (changed) {
+          // 替换成功后，把新的带云路径的引用更新回本地，避免以后重复传
+          originalSetItem.call(localStorage, key, JSON.stringify(lsData[key]));
+        }
+      }
+    }
+    if (statusEl && !silent) statusEl.innerText = '正在上传数据...';
 
     const payload = { data: lsData, updatedAt: Date.now() };
     const { error } = await supabaseClient
@@ -25642,9 +25679,11 @@ async function saveBasicSetting() {
   if (typeof syncPlatformsToMain === 'function') syncPlatformsToMain();
   if (typeof syncDepositFromSettings === 'function') syncDepositFromSettings();
 
-  // 2. ★ 手动触发一次云端同步
-  if (typeof currentUser !== 'undefined' && currentUser && typeof doCoverCloudInternal === 'function') {
-    await doCoverCloudInternal();
+  // 2. ★ 手动触发一次云端同步（走新的并发合并机制）
+  if (typeof currentUser !== 'undefined' && currentUser) {
+    window.__hasUnsavedChanges = true;
+    setPendingFlag(true);
+    await commitSyncNow();
   }
 
   // 3. 关闭编辑模式
@@ -25658,7 +25697,7 @@ async function saveBasicSetting() {
 
   document.getElementById('basicSettingEditBtn').style.display = 'block';
   document.getElementById('basicSettingSaveBtn').style.display = 'none';
-  showToast('✅ 基础信息已保存并同步', 3000);
+  showToast('✅ 基础信息已保存', 3000);
 }
 
 function backFromBasicSetting() {
