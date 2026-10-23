@@ -25302,7 +25302,112 @@ function showToast(msg, duration = 5000) {
   if (toast.timeout) clearTimeout(toast.timeout);
   toast.timeout = setTimeout(() => { toast.style.opacity = '0'; }, duration);
 }
+/* ══════════ 一键诊断无法登录原因 ══════════ */
+function showAuthDiagnoseModal() {
+  const emailVal = document.getElementById('authEmail') ? document.getElementById('authEmail').value.trim() : '';
+  const pwdVal = document.getElementById('authPassword') ? document.getElementById('authPassword').value.trim() : '';
 
+  $('modalRoot').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width: 440px;" onclick="event.stopPropagation()">
+        <div class="modal-head">
+          <h3>网络与账号诊断</h3>
+          <button class="icon-btn" onclick="closeModal();openAuthModal('login')">×</button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; margin-bottom: 16px;">
+            如果你确定没输错密码但一直无法登录，请点击下方按钮。系统会模拟一次注册/登录来排查真实原因。
+          </p>
+          <label>邮箱</label>
+          <input type="email" id="diagEmail" value="${escapeHtml(emailVal)}" placeholder="填写你正在用的邮箱" />
+          <label>密码</label>
+          <input type="password" id="diagPassword" value="${escapeHtml(pwdVal)}" placeholder="填写你正在用的密码" />
+          
+          <div id="diagResultBox" style="display:none; margin-top: 16px; padding: 12px; background: #f7f8fa; border: 1px solid var(--line); font-family: monospace; font-size: 12px; line-height: 1.6; color: var(--ink); white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto;"></div>
+
+          <div class="actions" style="justify-content:flex-end; margin-top: 18px;">
+            <button class="action-btn ghost" onclick="closeModal();openAuthModal('login')">返回登录</button>
+            <button class="action-btn" id="diagBtn" onclick="startAuthDiagnose()">开始检测</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function startAuthDiagnose() {
+  const email = document.getElementById('diagEmail').value.trim();
+  const password = document.getElementById('diagPassword').value.trim();
+  const btn = document.getElementById('diagBtn');
+  const resBox = document.getElementById('diagResultBox');
+
+  if (!email || !password) { alert('请先填写邮箱和密码'); return; }
+
+  btn.disabled = true;
+  btn.innerText = '检测中...';
+  resBox.style.display = 'block';
+  resBox.innerHTML = '正在连接服务器进行诊断...\n';
+
+  let report = `【账号诊断报告】\n时间：${new Date().toLocaleString()}\n`;
+  report += `账号：${email}\n`;
+  report += `密码长度：${password.length}位\n`;
+  report += `------------------------\n`;
+
+  try {
+    // 1. 查格式
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error('邮箱格式错误，缺少 @ 或域名（如 .com）。请仔细检查！');
+    }
+
+    // 2. 尝试登录
+    const { error: signInError } = await supabaseClient.auth.signInWithPassword({ email, password });
+    
+    if (!signInError) {
+      report += `✅ 检测结果：登录成功！\n`;
+      report += `你的账号密码完全正确。请返回主页刷新查看。`;
+      resBox.innerText = report;
+      return;
+    }
+
+    report += `尝试登录失败：${signInError.message}\n`;
+
+    if (signInError.message.indexOf('Invalid login credentials') > -1) {
+      // 3. 究竟是密码错，还是没注册？我们尝试去注册他
+      report += `正在检测该邮箱是否已注册...\n`;
+      const { data: signUpData, error: signUpError } = await supabaseClient.auth.signUp({ email, password });
+      
+      if (signUpError) {
+        if (signUpError.message.indexOf('User already registered') > -1) {
+          report += `❌ 检测结果：该账号已存在，但你输入的密码错误！\n`;
+          report += `👉 解决办法：请点击【找回密码】重置密码，或者检查键盘大小写、前后是否多打了空格。`;
+        } else {
+          report += `❌ 注册测试异常：${signUpError.message}\n`;
+        }
+      } else if (signUpData && signUpData.user && signUpData.user.identities && signUpData.user.identities.length === 0) {
+        // 如果注册返回的 identities 是空数组，说明邮箱已存在
+        report += `❌ 检测结果：该账号已存在，但密码错误！\n`;
+        report += `👉 解决办法：请点击【找回密码】重置密码。`;
+      } else {
+        // 如果直接注册成功了，说明根本没注册过
+        report += `❌ 检测结果：该邮箱【从未注册过】！\n`;
+        report += `👉 解决办法：系统已顺手帮你注册，请直接返回登录即可。`;
+      }
+    } else {
+      report += `❌ 检测结果：遇到其他错误。\n`;
+      report += `错误代码：${signInError.status} \n`;
+    }
+  } catch (err) {
+    if (err.message.indexOf('Failed to fetch') > -1) {
+      report += `❌ 检测结果：网络请求失败！\n👉 请检查你的网络连接，或关闭 VPN、广告拦截插件。`;
+    } else {
+      report += `❌ 检测结果：${err.message}`;
+    }
+  } finally {
+    resBox.innerText = report + `\n\n=================\n👉 请将上方文字截图发给开发者 👈`;
+    btn.disabled = false;
+    btn.innerText = '重新检测';
+  }
+}
 function openAuthModal(mode) {
   window.__authMode = mode;
   const modalHTML = `
@@ -25321,8 +25426,11 @@ function openAuthModal(mode) {
           <div class="actions" style="justify-content:center; margin-top:24px;">
             <button class="action-btn" style="width:100%;" id="authSubmitBtn" onclick="submitAuthForm()">${mode === 'login' ? '登 录' : '注 册'}</button>
           </div>
-          <div style="display:flex; justify-content:space-between; margin-top:20px; font-size:12.5px; color:var(--ink-soft);">
-            <span id="authForgotBtn" style="cursor:pointer; text-decoration:underline; ${mode === 'register' ? 'display:none;' : ''}" onclick="showForgotPasswordModal()">找回密码</span>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; font-size:12.5px; color:var(--ink-soft);">
+            <div style="display:flex; gap:12px;">
+              <span id="authForgotBtn" style="cursor:pointer; text-decoration:underline; ${mode === 'register' ? 'display:none;' : ''}" onclick="showForgotPasswordModal()">找回密码</span>
+              <span style="cursor:pointer; text-decoration:underline; color:var(--red);" onclick="showAuthDiagnoseModal()">无法登录？点此检测</span>
+            </div>
             <span id="authSwitchBtn" style="cursor:pointer; text-decoration:underline;" onclick="switchAuthMode()">
               ${mode === 'login' ? '没有账号？去注册' : '已有账号？去登录'}
             </span>
@@ -25344,15 +25452,16 @@ function switchAuthMode() {
 
 function showAuthError(msg) { document.getElementById('authModalError').innerText = msg; }
 
-/* ══════════ 核心验证与提交逻辑 ══════════ */
+/* ══════════ 核心验证与提交逻辑（强化防呆） ══════════ */
 async function submitAuthForm() {
   if (!initCloud()) return;
+  // ★ 核心优化：强制去掉前后的空格，防止手机自动加空格
   const email = document.getElementById('authEmail').value.trim();
-  const password = document.getElementById('authPassword').value;
+  const password = document.getElementById('authPassword').value.trim();
 
-  // 1. 明确的输入拦截提示，不让用户以为是网络问题
+  // 1. 精确拦截
   if (!email) { showAuthError('请填写邮箱！'); return; }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showAuthError('邮箱格式不正确！'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showAuthError('邮箱格式不正确，请检查是否遗漏了 @ 或 .com'); return; }
   if (!password) { showAuthError('请填写密码！'); return; }
   if (password.length < 6) { showAuthError('密码不能少于 6 位！'); return; }
 
@@ -25367,8 +25476,12 @@ async function submitAuthForm() {
       // ============ 登录逻辑 ============
       const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
       if (error) {
-        if (error.message.indexOf('Invalid login credentials') > -1) showAuthError('该账号未注册或密码错误，请先注册！');
-        else showAuthError('登录失败：' + error.message);
+        if (error.message.indexOf('Invalid login credentials') > -1) {
+          // ★ 核心优化：不再误导用户，如果反复错，引导他点诊断
+          showAuthError('账号或密码错误。如果确认没输错，请点击下方【无法登录？点此检测】。');
+        } else {
+          showAuthError('登录失败：' + error.message);
+        }
       } else {
         closeAuthModal(); showToast('登录成功！');
         await checkUserSession();
@@ -25398,7 +25511,6 @@ async function submitAuthForm() {
   } catch (err) {
     showAuthError('网络请求失败，请检查网络！'); console.error('注册/登录异常：', err);
   } finally {
-    // ★ 核心优化：无论成功还是失败，只要请求结束，按钮必须解锁！
     btn.disabled = false;
     btn.innerText = mode === 'login' ? '登 录' : '注 册';
   }
