@@ -26002,60 +26002,94 @@ function showAlgorithmFormulaModal() {
   document.getElementById('modalRoot').innerHTML = html;
 }
 /* ═══════════════════════════════════════════════════════
-   [数据修复] 自动修复历史订单的实收流水
+   [数据修复] 自动修复历史脏数据（安全防丢版 v4）
    ═══════════════════════════════════════════════════════ */
 function autoFixHistoricalFlows() {
-  // 1. 检查是否已经修复过，每个浏览器只需跑一次，防止重复修复
-  if (localStorage.getItem('listReceiptFlowFixVersion') === 'v2') return;
+  // 每次升级版本号，确保用户的浏览器能执行一次最新的修复
+  if (localStorage.getItem('listReceiptFlowFixVersion') === 'v4') return;
   
+  const todos = getTodos();
   const completed = getCompleted();
+  const cancelled = getCancelled();
+  const discarded = getDiscarded();
   let flows = getFlows();
-  let fixedCount = 0;
+  let fixedTodos = 0;
+  let fixedFlows = 0;
 
+  // 1. 收集所有已结单/撤单/废稿的 todoId
+  const settledIds = new Set();
+  completed.forEach(c => { if (c.todoId) settledIds.add(c.todoId); });
+  cancelled.forEach(c => { if (c.todoId) settledIds.add(c.todoId); });
+  discarded.forEach(c => { if (c.todoId) settledIds.add(c.todoId); });
+
+  // 2. 安全清理待办：只要订单进了历史记录，待办里就不该有
+  const newTodos = todos.filter(t => {
+    if (settledIds.has(t.id)) {
+      fixedTodos++;
+      return false; 
+    }
+    return true;
+  });
+
+  // 3. 安全补全流水（只给完全没有流水的订单补，绝不删除用户已有的数据）
   completed.forEach(c => {
-    const totalReceived = Number(c.totalReceived) || 0;
+    // 兼容老数据：如果没有 totalReceived，尝试用 prepaid + finalAmount 计算
+    let totalReceived = Number(c.totalReceived);
+    if (isNaN(totalReceived) || totalReceived === 0) {
+      totalReceived = (Number(c.prepaid) || 0) + (Number(c.finalAmount) || 0);
+    }
     if (totalReceived <= 0) return;
 
-    // 查询这个订单目前的流水，判断是否需要修复
-    const related = flows.filter(f => f.completedId === c.id);
-    const finalFlows = related.filter(f => f.type === 'final');
+    // 检查这个订单到底有没有产生过实收流水
+    const hasAnyFlow = flows.some(f => 
+      f.completedId === c.id || 
+      (c.todoId && f.todoId === c.todoId && (f.type === 'final' || f.type === 'prepaid'))
+    );
 
-    let needsFix = false;
-    // 如果没有最终实收流水，或者金额对不上，就判定为需要修复
-    if (finalFlows.length !== 1) {
-      needsFix = true;
-    } else if (Math.abs(Number(finalFlows[0].amount) - totalReceived) > 0.01) {
-      needsFix = true;
-    }
-
-    if (needsFix) {
-      // 删掉该订单所有旧的错误流水（尾款、预付款、排班费等错误记录）
-      flows = flows.filter(f => f.completedId !== c.id);
-
-      // 重新生成一条正确的总实收流水
+    // ★ 核心安全机制：如果已经有过流水了，哪怕金额不对，也绝对不碰！
+    // 只有当他一条流水都没有（纯脏数据）时，才帮他补一条。
+    if (!hasAnyFlow) {
       flows.push({
         id: makeFlowId(),
         type: 'final',
         amount: totalReceived,
-        note: '实收（预付款+尾款） · ' + (c.clientName || '未命名') + ' [系统自动修复]',
-        date: c.completedDate || fmtDateStr(new Date()),
+        note: '实收（系统补录） · ' + (c.clientName || '未命名'),
+        date: c.completedDate || c.orderDate || fmtDateStr(new Date()),
         todoId: c.todoId || '',
         completedId: c.id,
         cancelledId: '',
         discardedId: '',
         createdAt: Date.now()
       });
-      fixedCount++;
+      fixedFlows++;
     }
   });
 
-  if (fixedCount > 0) {
-    setFlows(flows);
-    console.log('✅ 系统已自动修复 ' + fixedCount + ' 条历史订单的实收流水。');
-    // 刷新统计页面（如果当前在统计页，立刻生效）
+  // 4. 写入本地并静默同步云端
+  if (fixedTodos > 0 || fixedFlows > 0) {
+    if (fixedTodos > 0) setTodos(newTodos);
+    if (fixedFlows > 0) setFlows(flows);
+    
+    localStorage.setItem('listReceiptFlowFixVersion', 'v4');
+    
+    // 如果有登录，延迟 2 秒后自动触发一次云端同步，确保上传成功
+    if (typeof currentUser !== 'undefined' && currentUser) {
+      window.__hasUnsavedChanges = true;
+      if (typeof setPendingFlag === 'function') setPendingFlag(true);
+      if (typeof commitSyncNow === 'function') {
+        setTimeout(() => commitSyncNow(true), 2000);
+      }
+    }
+    
+    // 刷新页面数据
+    if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderStatsPage === 'function') renderStatsPage();
+    if (typeof renderCompletedList === 'function') renderCompletedList();
+    if (typeof renderCancelledList === 'function') renderCancelledList();
+    if (typeof renderDiscardedList === 'function') renderDiscardedList();
+    
+    console.log(`✅ 数据修复成功：清理残留待办 ${fixedTodos} 条，补录缺失流水 ${fixedFlows} 条。`);
+  } else {
+    localStorage.setItem('listReceiptFlowFixVersion', 'v4');
   }
-  
-  // 标记已修复，以后不再重复执行
-  localStorage.setItem('listReceiptFlowFixVersion', 'v2');
 }
