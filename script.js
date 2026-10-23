@@ -25167,8 +25167,7 @@ async function doCoverLocalInternal(forceOverwrite) {
   const { data, error } = await supabaseClient
     .from('user_data')
     .select('data')
-    .order('id', { ascending: false })
-    .limit(1)
+    .eq('user_id', session.user.id)
     .maybeSingle();
 
   if (error) { showToast('❌ 读取云端失败：' + error.message); return; }
@@ -25500,7 +25499,7 @@ async function handleStartupSync(isNewOpen) {
   // 新打开 + 无未上传 → 拉云端覆盖本地
   if (isNewOpen) {
     try {
-      const { data } = await supabaseClient.from('user_data').select('id').limit(1).maybeSingle();
+      const { data } = await supabaseClient.from('user_data').select('id').eq('user_id', session.user.id).maybeSingle();
       if (data) {
         showToast('正在同步云端最新数据...', 2000);
         await doCoverLocalInternal(true);
@@ -25520,8 +25519,11 @@ function showPendingUploadPrompt() {
     let cloudHasData = false;
     try {
       if (supabaseClient) {
-        const { data } = await supabaseClient.from('user_data').select('id').limit(1).maybeSingle();
-        cloudHasData = !!data;
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (session) {
+          const { data } = await supabaseClient.from('user_data').select('id').eq('user_id', session.user.id).maybeSingle();
+          cloudHasData = !!data;
+        }
       }
     } catch (e) {}
 
