@@ -25496,13 +25496,28 @@ async function submitAuthForm() {
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value.trim();
 
-  // 1. 简单粗暴的格式校验（只提示格式错）
+  // 1. 基础校验
   if (!email) { showAuthError('请输入邮箱！'); return; }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { 
-    showAuthError('邮箱格式错误，请检查是否包含 @ 和 .com 等后缀！'); return; 
+    showAuthError('邮箱格式错误，请输入正确的邮箱地址'); return; 
   }
   if (!password) { showAuthError('请填写密码！'); return; }
   if (password.length < 6) { showAuthError('密码不能少于 6 位！'); return; }
+
+  // 2. 常见邮箱后缀手误拦截（防呆，防止因少打一个字母变成别的国家域名）
+  const emailLower = email.toLowerCase();
+  const typoMap = {
+    '@qq.co': '@qq.com', '@qq.c': '@qq.com', '@qq.om': '@qq.com', '@qq.con': '@qq.com',
+    '@163.co': '@163.com', '@163.c': '@163.com', '@163.om': '@163.com',
+    '@gmail.co': '@gmail.com', '@gmail.c': '@gmail.com',
+    '@126.co': '@126.com', '@126.c': '@126.com'
+  };
+  for (const typo in typoMap) {
+    if (emailLower.endsWith(typo)) {
+      showAuthError(`❌ 邮箱后缀错误！您是不是想输入：${typoMap[typo]} ？请修改后再试。`);
+      return;
+    }
+  }
 
   const mode = window.__authMode;
   const btn = document.getElementById('authSubmitBtn');
@@ -25513,41 +25528,35 @@ async function submitAuthForm() {
   try {
     if (mode === 'login') {
       // ============ 登录逻辑 ============
+      // ★ 绝对安全：只调用 signInWithPassword，失败就报错，绝不偷偷注册！
       const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
       
       if (error) {
         if (error.message.indexOf('Invalid login credentials') > -1) {
-          // ★ 核心难点：Supabase 为了安全，不区分是账号错还是密码错。
-          // 我们通过尝试“注册”来反推真实原因。
-          const { data: testData, error: testError } = await supabaseClient.auth.signUp({ email, password });
-          
-          if (testError && testError.message.indexOf('User already registered') > -1) {
-            // 注册报错“已注册” -> 说明账号存在，那就是密码错了
-            showAuthError('❌ 密码错误！如果忘记密码，请点击下方【找回密码】。');
-          } else if (testData && testData.user && testData.user.identities && testData.user.identities.length === 0) {
-             // 注册返回空的 identities -> 说明账号存在，也是密码错了
-             showAuthError('❌ 密码错误！如果忘记密码，请点击下方【找回密码】。');
-          } else {
-            // 居然注册没报错，或者返回了新用户 -> 说明根本没这个账号！
-            showAuthError('❌ 账号错误！该邮箱尚未注册过，请点击右下角【去注册】。');
-          }
+          // Supabase 出于安全考虑，不会告诉你到底是账号错还是密码错，统一报这个
+          showAuthError('❌ 账号或密码错误！请检查大小写、多余空格，或点击下方【找回密码】。');
         } else if (error.message.indexOf('Email not confirmed') > -1) {
           showAuthError('该账号未验证邮箱，请去邮箱点击验证链接。');
         } else {
           showAuthError('登录失败：' + error.message);
         }
       } else {
+        // 登录成功
         closeAuthModal(); showToast('登录成功！');
         await checkUserSession();
         await handlePostLoginSync();
       }
     } else {
       // ============ 注册逻辑 ============
+      // 只有用户明确点击了“注册”按钮（mode === 'register'），才会执行这里的代码
       const { data, error } = await supabaseClient.auth.signUp({ email, password });
       
       if (error) {
-        if (error.message.indexOf('User already registered') > -1) showAuthError('❌ 该账号已注册，请直接去登录！');
-        else showAuthError('注册失败：' + error.message);
+        if (error.message.indexOf('User already registered') > -1) {
+          showAuthError('❌ 该账号已注册，请直接去登录！');
+        } else {
+          showAuthError('注册失败：' + error.message);
+        }
       } else {
         if (data.session) {
           closeAuthModal(); showToast('注册成功！已自动登录。');
@@ -25563,85 +25572,8 @@ async function submitAuthForm() {
       }
     }
   } catch (err) {
-    showAuthError('网络请求失败，请检查网络！'); console.error('注册/登录异常：', err);
-  } finally {
-    btn.disabled = false;
-    btn.innerText = mode === 'login' ? '登 录' : '注 册';
-  }
-}async function submitAuthForm() {
-  if (!initCloud()) return;
-  
-  const email = document.getElementById('authEmail').value.trim();
-  const password = document.getElementById('authPassword').value.trim();
-
-  // 1. 邮箱格式校验
-  if (!email) { showAuthError('请输入邮箱！'); return; }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { 
-    // ★ 修改1：邮箱格式报错文案
-    showAuthError('邮箱格式错误，请输入正确的邮箱地址'); return; 
-  }
-  if (!password) { showAuthError('请填写密码！'); return; }
-  if (password.length < 6) { showAuthError('密码不能少于 6 位！'); return; }
-
-  const mode = window.__authMode;
-  const btn = document.getElementById('authSubmitBtn');
-  btn.disabled = true;
-  btn.innerText = mode === 'login' ? '登录中...' : '注册中...';
-  showAuthError('');
-
-  try {
-    if (mode === 'login') {
-      // ============ 登录逻辑 ============
-      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-      
-      if (error) {
-        if (error.message.indexOf('Invalid login credentials') > -1) {
-          // ★ 通过尝试注册来反推真实原因
-          const { data: testData, error: testError } = await supabaseClient.auth.signUp({ email, password });
-          
-          if (testError && testError.message.indexOf('User already registered') > -1) {
-            // ★ 修改2：密码错误文案
-            showAuthError('密码错误！请重新输入或点击下方【找回密码】');
-          } else if (testData && testData.user && testData.user.identities && testData.user.identities.length === 0) {
-            // ★ 修改3：密码错误文案
-            showAuthError('密码错误！请重新输入或点击下方【找回密码】');
-          } else {
-            // ★ 修改4：账号错误文案
-            showAuthError('账号输入错误或该邮箱尚未注册过');
-          }
-        } else if (error.message.indexOf('Email not confirmed') > -1) {
-          showAuthError('该账号未验证邮箱，请去邮箱点击验证链接。');
-        } else {
-          showAuthError('登录失败：' + error.message);
-        }
-      } else {
-        closeAuthModal(); showToast('登录成功！');
-        await checkUserSession();
-        await handlePostLoginSync();
-      }
-    } else {
-      // ============ 注册逻辑 ============
-      const { data, error } = await supabaseClient.auth.signUp({ email, password });
-      
-      if (error) {
-        if (error.message.indexOf('User already registered') > -1) showAuthError('该账号已注册，请直接去登录！');
-        else showAuthError('注册失败：' + error.message);
-      } else {
-        if (data.session) {
-          closeAuthModal(); showToast('注册成功！已自动登录。');
-          await checkUserSession();
-          await handlePostLoginSync();
-        } else if (data.user && data.user.identities && data.user.identities.length === 0) {
-          showAuthError('该邮箱已经注册过了，请直接去登录！');
-        } else {
-          closeAuthModal();
-          alert('注册成功！请使用该邮箱和密码登录。');
-          openAuthModal('login');
-        }
-      }
-    }
-  } catch (err) {
-    showAuthError('网络请求失败，请检查网络！'); console.error('注册/登录异常：', err);
+    showAuthError('网络请求失败，请检查网络！'); 
+    console.error('注册/登录异常：', err);
   } finally {
     btn.disabled = false;
     btn.innerText = mode === 'login' ? '登 录' : '注 册';
