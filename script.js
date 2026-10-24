@@ -25588,7 +25588,8 @@ async function handlePostLoginSync() {
 async function doAccountLogout() {
   if (!confirm('确定要退出登录吗？退出后数据仍会保留在本机。')) return;
   await supabaseClient.auth.signOut();
-  showToast('已退出登录', 3000);
+  // ★ 注意：这里故意不清除 receiptLastLoginUid，为了下次登录时检测是否换号
+  showToast('已退出登录，请放心，数据已保存在本机。', 4000);
   await checkUserSession();
 }
 
@@ -25672,7 +25673,42 @@ async function handleStartupSync(isNewOpen) {
   if (!session) return;
   currentUser = session.user;
 
-  // 如果有未上传的数据，优先上传，不上传完不许拉云端
+  const currentUid = currentUser.id;
+  const lastUid = localStorage.getItem('receiptLastLoginUid');
+
+  // ★ 核心修复：多账号切换隔离（防止串号）
+  if (lastUid && lastUid !== currentUid) {
+    // 发现换号了！本地数据是上一个账号的残留
+    // 绝对不允许上传，必须提示清理
+    if (confirm("⚠️ 检测到您切换了账号！\n\n是否清空当前设备上另一个账号的旧数据，并从云端拉取当前账号的最新数据？\n\n（如果不清理，旧账号的订单会显示在新账号里，造成数据错乱）")) {
+      // 1. 清空本地残留的核心数据
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.indexOf('listReceipt') === 0) keysToRemove.push(k);
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+      
+      // 2. 记录新账号 ID
+      localStorage.setItem('receiptLastLoginUid', currentUid);
+      
+      // 3. 从云端拉取新账号数据
+      if (typeof showToast === 'function') showToast('正在拉取新账号数据...', 3000);
+      await doCoverLocalInternal(true);
+      
+      // 4. 刷新页面，重新初始化所有 UI 组件
+      location.reload();
+      return;
+    } else {
+      alert("为了数据安全，已取消登录。请先手动清理本地数据，或退出登录。");
+      return;
+    }
+  }
+
+  // 记录本次登录的账号 ID
+  localStorage.setItem('receiptLastLoginUid', currentUid);
+
+  // === 下面是原有的正常同步逻辑 ===
   if (hasPendingFlag() || window.__hasUnsavedChanges) {
     window.__hasUnsavedChanges = true;
     setPendingFlag(true);
@@ -25684,15 +25720,12 @@ async function handleStartupSync(isNewOpen) {
     return;
   }
 
-  // 新打开且无未上传 → 拉云端覆盖本地
   if (isNewOpen) {
     try {
       const { data } = await supabaseClient.from('user_data').select('id').eq('user_id', session.user.id).maybeSingle();
       if (data) {
         showToast('正在同步云端最新数据...', 2000);
-        // ★ 核心修复：强制等待拉取完成
         await doCoverLocalInternal(true);
-        // 拉取完成后，稍微等一下再触发自动修复，防止数据错乱
         setTimeout(() => {
           if (typeof autoFixHistoricalFlows === 'function') autoFixHistoricalFlows();
         }, 1000);
