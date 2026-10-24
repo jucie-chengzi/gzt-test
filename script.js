@@ -26002,85 +26002,125 @@ function showAlgorithmFormulaModal() {
   document.getElementById('modalRoot').innerHTML = html;
 }
 /* ═══════════════════════════════════════════════════════
-   [数据修复] 自动修复历史脏数据（精准安全版 v5）
+   [数据修复 v4] 安全扫描并修复历史脏数据（待办残留、缺流水）
    ═══════════════════════════════════════════════════════ */
 function autoFixHistoricalFlows() {
-  if (localStorage.getItem('listReceiptFlowFixVersion') === 'v5') return;
+  // 版本控制：升级到 v4，每个浏览器只跑一次
+  if (localStorage.getItem('listReceiptFlowFixVersion') === 'v4') return;
   
   const todos = getTodos();
   const completed = getCompleted();
+  const cancelled = getCancelled();
+  const discarded = getDiscarded();
   let flows = getFlows();
-  let fixedCount = 0;
-  let removedTodoCount = 0;
+  
+  let fixedTodos = 0;
+  let fixedFlows = 0;
 
-  // 1. 安全补全流水（只查漏补缺，不覆盖用户自己记的）
+  // ==========================================
+  // 第一步：安全清理【待办残留】
+  // 只有出现在结单/撤单/废稿里的 ID，才从待办里删！
+  // ==========================================
+  const settledIds = new Set();
+  
+  // 只收集明确有 todoId 的记录
+  completed.forEach(c => { if (c.todoId && c.todoId.trim() !== '') settledIds.add(c.todoId); });
+  cancelled.forEach(c => { if (c.todoId && c.todoId.trim() !== '') settledIds.add(c.todoId); });
+  discarded.forEach(c => { if (c.todoId && c.todoId.trim() !== '') settledIds.add(c.todoId); });
+
+  const newTodos = todos.filter(t => {
+    // 如果待办的 ID 命中了已结单/撤单/废稿的 ID，说明是重复的，删掉
+    if (settledIds.has(t.id)) {
+      fixedTodos++;
+      return false; 
+    }
+    return true; // 正常的占位单、待办单原样保留
+  });
+
+  // ==========================================
+  // 第二步：安全补全【统计流水】
+  // 只有金额对不上，或完全缺失时，才补录
+  // ==========================================
+  
+  // 修复已结单
   completed.forEach(c => {
     const totalReceived = Number(c.totalReceived) || 0;
     if (totalReceived <= 0) return;
 
-    const related = flows.filter(f => f.completedId === c.id);
-    const finalFlows = related.filter(f => f.type === 'final');
+    // 查找该订单目前的所有实收(final)流水
+    const finalFlows = flows.filter(f => f.completedId === c.id && f.type === 'final');
 
-    let needsFix = false;
-    if (finalFlows.length !== 1) {
-      needsFix = true;
-    } else if (Math.abs(Number(finalFlows[0].amount) - totalReceived) > 0.01) {
-      needsFix = true;
+    // 如果是 1 条且金额正确，说明数据完好，直接跳过，绝不修改
+    if (finalFlows.length === 1 && Math.abs(Number(finalFlows[0].amount) - totalReceived) <= 0.01) {
+      return; 
     }
 
-    if (needsFix) {
-      flows = flows.filter(f => f.completedId !== c.id);
-      flows.push({
-        id: makeFlowId(),
-        type: 'final',
-        amount: totalReceived,
-        note: '实收（预付款+尾款） · ' + (c.clientName || '未命名') + ' [系统自动修复]',
-        date: c.completedDate || fmtDateStr(new Date()),
-        todoId: c.todoId || '',
-        completedId: c.id,
-        cancelledId: '',
-        discardedId: '',
-        createdAt: Date.now()
-      });
-      fixedCount++;
+    // 如果走到这里，说明流水缺失或重复。清理掉旧的，重新生成一条最干净的。
+    flows = flows.filter(f => !(f.completedId === c.id && f.type === 'final'));
+    flows.push({
+      id: makeFlowId(),
+      type: 'final',
+      amount: totalReceived,
+      note: '实收（预付款+尾款） · ' + (c.clientName || '未命名') + ' [系统自动修复]',
+      date: c.completedDate || fmtDateStr(new Date()),
+      todoId: c.todoId || '',
+      completedId: c.id,
+      cancelledId: '',
+      discardedId: '',
+      createdAt: Date.now()
+    });
+    fixedFlows++;
+  });
+
+  // 修复撤单/废稿的退款和费用（同理，只补缺失的）
+  cancelled.forEach(c => {
+    if (Number(c.feeAmount) > 0 && !flows.some(f => f.cancelledId === c.id && f.type === 'cancel')) {
+       flows.push({ id: makeFlowId(), type: 'cancel', amount: Number(c.feeAmount), note: '跑单费 [系统修复]', date: c.cancelledDate || fmtDateStr(new Date()), todoId: c.todoId || '', completedId: '', cancelledId: c.id, discardedId: '', createdAt: Date.now() });
+       fixedFlows++;
+    }
+    if (Number(c.refundAmount) > 0 && !flows.some(f => f.cancelledId === c.id && f.type === 'refund')) {
+       flows.push({ id: makeFlowId(), type: 'refund', amount: Number(c.refundAmount), note: '撤单退款 [系统修复]', date: c.cancelledDate || fmtDateStr(new Date()), todoId: c.todoId || '', completedId: '', cancelledId: c.id, discardedId: '', createdAt: Date.now() });
+       fixedFlows++;
     }
   });
 
-  // 2. 极其精准地清理待办残留（必须同时满足三个条件才会删）
-  const newTodos = todos.filter(t => {
-    // 查找有没有跟这个待办对应的结单记录
-    const matchComplete = completed.find(c => c.todoId === t.id);
-    
-    // ★ 安全判定：只有结单记录里有明确的结单日期、且明确收到了钱，才认为是真结单
-    if (matchComplete && matchComplete.completedDate && Number(matchComplete.totalReceived) > 0) {
-      removedTodoCount++;
-      return false; // 从待办中移除
+  discarded.forEach(c => {
+    if (Number(c.feeAmount) > 0 && !flows.some(f => f.discardedId === c.id && f.type === 'discard')) {
+       flows.push({ id: makeFlowId(), type: 'discard', amount: Number(c.feeAmount), note: '废稿费 [系统修复]', date: c.discardedDate || fmtDateStr(new Date()), todoId: c.todoId || '', completedId: '', cancelledId: '', discardedId: c.id, createdAt: Date.now() });
+       fixedFlows++;
     }
-    
-    // 如果找不到匹配的，或者只是个误入结单表的空壳，保留在待办里！
-    return true; 
+    if (Number(c.refundAmount) > 0 && !flows.some(f => f.discardedId === c.id && f.type === 'refund')) {
+       flows.push({ id: makeFlowId(), type: 'refund', amount: Number(c.refundAmount), note: '废稿退款 [系统修复]', date: c.discardedDate || fmtDateStr(new Date()), todoId: c.todoId || '', completedId: '', cancelledId: '', discardedId: c.id, createdAt: Date.now() });
+       fixedFlows++;
+    }
   });
 
-  if (fixedCount > 0 || removedTodoCount > 0) {
-    if (fixedCount > 0) setFlows(flows);
-    if (removedTodoCount > 0) setTodos(newTodos);
-
-    localStorage.setItem('listReceiptFlowFixVersion', 'v5');
-
-    // 静默同步云端
+  // ==========================================
+  // 第三步：如果有修复，立刻同步云端
+  // ==========================================
+  if (fixedTodos > 0 || fixedFlows > 0) {
+    if (fixedTodos > 0) setTodos(newTodos);
+    if (fixedFlows > 0) setFlows(flows);
+    
+    localStorage.setItem('listReceiptFlowFixVersion', 'v4');
+    
     if (typeof currentUser !== 'undefined' && currentUser) {
       window.__hasUnsavedChanges = true;
       if (typeof setPendingFlag === 'function') setPendingFlag(true);
       if (typeof commitSyncNow === 'function') {
-        setTimeout(() => commitSyncNow(true), 1000);
+        setTimeout(() => commitSyncNow(true), 1500);
       }
     }
     
     if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderStatsPage === 'function') renderStatsPage();
+    if (typeof renderCompletedList === 'function') renderCompletedList();
+    if (typeof renderCancelledList === 'function') renderCancelledList();
+    if (typeof renderDiscardedList === 'function') renderDiscardedList();
     
-    console.log(`✅ 修复完成：补全流水 ${fixedCount} 条，安全清理已结单残留待办 ${removedTodoCount} 条。`);
+    console.log(`✅ 安全修复完成：清理了重复待办 ${fixedTodos} 条，修复了异常流水 ${fixedFlows} 条。数据已上传云端。`);
   } else {
-    localStorage.setItem('listReceiptFlowFixVersion', 'v5');
+    // 如果没有脏数据，也标记为最新版本，以后不再重复扫描
+    localStorage.setItem('listReceiptFlowFixVersion', 'v4');
   }
 }
