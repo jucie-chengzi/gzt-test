@@ -7133,7 +7133,9 @@ function captureReceiptFormSnapshot() {
     algorithmSettings: getAlgorithmSettings(),
     depositEnabled: isDepositEnabled(),
     prepaidConfig: JSON.parse(JSON.stringify(getPrepaidConfig())),
-    orderServiceFee: getOrderServiceFeeConfig()
+    orderServiceFee: getOrderServiceFeeConfig(),
+    // ★ 新增：保存当前的小票版式设置（外观、位置、背景等）
+    receiptSettingsSnapshot: JSON.parse(JSON.stringify(getReceiptSettings()))
   };
 }
 
@@ -8724,7 +8726,16 @@ async function generateFinalReceipt(todo, settleState) {
   const originalNextSibling = receiptEl.nextSibling;
   let offscreen = null;
 
+  // ★ 核心修复：备份当前的全局小票设置
+  const backupSettings = getReceiptSettings();
+
   try {
+    // ★ 核心修复：临时替换为该订单当初保存的版式设置
+    if (todo.receiptSnapshot && todo.receiptSnapshot.receiptSettingsSnapshot) {
+      setReceiptSettings(todo.receiptSnapshot.receiptSettingsSnapshot);
+      applyReceiptSettings();
+    }
+
     /* 1. 把订单快照写进小票页的 DOM */
     if (todo.receiptSnapshot) {
       restoreReceiptFormSnapshot(todo.receiptSnapshot);
@@ -8872,6 +8883,10 @@ async function generateFinalReceipt(todo, settleState) {
 
     /* 13. 恢复用户小票页数据 */
     try {
+      // ★ 恢复全局设置
+      setReceiptSettings(backupSettings);
+      applyReceiptSettings();
+
       restoreReceiptFormSnapshot(backupSnap);
       window.__editingTodoId = backupEditingId;
       window.__currentOrderNo = backupOrderNo;
