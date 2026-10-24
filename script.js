@@ -25672,27 +25672,30 @@ async function handleStartupSync(isNewOpen) {
   if (!session) return;
   currentUser = session.user;
 
-  // 有未上传数据
+  // 如果有未上传的数据，优先上传，不上传完不许拉云端
   if (hasPendingFlag() || window.__hasUnsavedChanges) {
     window.__hasUnsavedChanges = true;
     setPendingFlag(true);
     if (isNewOpen) {
-      // 新打开 / 登录：弹窗询问用户
       showPendingUploadPrompt();
     } else {
-      // 刷新 / 切屏：静默重试上传
       await commitSyncNow(true);
     }
     return;
   }
 
-  // 新打开 + 无未上传 → 拉云端覆盖本地
+  // 新打开且无未上传 → 拉云端覆盖本地
   if (isNewOpen) {
     try {
       const { data } = await supabaseClient.from('user_data').select('id').eq('user_id', session.user.id).maybeSingle();
       if (data) {
         showToast('正在同步云端最新数据...', 2000);
+        // ★ 核心修复：强制等待拉取完成
         await doCoverLocalInternal(true);
+        // 拉取完成后，稍微等一下再触发自动修复，防止数据错乱
+        setTimeout(() => {
+          if (typeof autoFixHistoricalFlows === 'function') autoFixHistoricalFlows();
+        }, 1000);
       } else {
         showToast('云端暂无备份数据。', 3000);
       }
@@ -25700,7 +25703,6 @@ async function handleStartupSync(isNewOpen) {
       console.warn('[启动同步] 拉云端失败', e);
     }
   }
-  // 刷新 / 切屏 + 无未上传 → 什么都不做
 }
 
 // 弹窗：询问用户“上次数据未上传，是否上传”
@@ -26002,11 +26004,11 @@ function showAlgorithmFormulaModal() {
   document.getElementById('modalRoot').innerHTML = html;
 }
 /* ═══════════════════════════════════════════════════════
-   [数据修复 v4] 安全扫描并修复历史脏数据（待办残留、缺流水）
+   [数据修复 v5] 彻底清理云端幽灵数据，并强制覆盖
    ═══════════════════════════════════════════════════════ */
 function autoFixHistoricalFlows() {
-  // 版本控制：升级到 v4，每个浏览器只跑一次
-  if (localStorage.getItem('listReceiptFlowFixVersion') === 'v4') return;
+  // 版本升级到 v5，强制所有用户重跑一次
+  if (localStorage.getItem('listReceiptFlowFixVersion') === 'v5') return;
   
   const todos = getTodos();
   const completed = getCompleted();
@@ -26017,110 +26019,66 @@ function autoFixHistoricalFlows() {
   let fixedTodos = 0;
   let fixedFlows = 0;
 
-  // ==========================================
-  // 第一步：安全清理【待办残留】
-  // 只有出现在结单/撤单/废稿里的 ID，才从待办里删！
-  // ==========================================
+  // 1. 收集结单/撤单/废稿的 ID
   const settledIds = new Set();
-  
-  // 只收集明确有 todoId 的记录
-  completed.forEach(c => { if (c.todoId && c.todoId.trim() !== '') settledIds.add(c.todoId); });
-  cancelled.forEach(c => { if (c.todoId && c.todoId.trim() !== '') settledIds.add(c.todoId); });
-  discarded.forEach(c => { if (c.todoId && c.todoId.trim() !== '') settledIds.add(c.todoId); });
+  completed.forEach(c => { if (c.todoId) settledIds.add(c.todoId); });
+  cancelled.forEach(c => { if (c.todoId) settledIds.add(c.todoId); });
+  discarded.forEach(c => { if (c.todoId) settledIds.add(c.todoId); });
 
+  // 2. 清理待办幽灵数据
   const newTodos = todos.filter(t => {
-    // 如果待办的 ID 命中了已结单/撤单/废稿的 ID，说明是重复的，删掉
     if (settledIds.has(t.id)) {
       fixedTodos++;
       return false; 
     }
-    return true; // 正常的占位单、待办单原样保留
+    return true;
   });
 
-  // ==========================================
-  // 第二步：安全补全【统计流水】
-  // 只有金额对不上，或完全缺失时，才补录
-  // ==========================================
-  
-  // 修复已结单
+  // 3. 补全遗漏流水
   completed.forEach(c => {
     const totalReceived = Number(c.totalReceived) || 0;
     if (totalReceived <= 0) return;
-
-    // 查找该订单目前的所有实收(final)流水
     const finalFlows = flows.filter(f => f.completedId === c.id && f.type === 'final');
-
-    // 如果是 1 条且金额正确，说明数据完好，直接跳过，绝不修改
-    if (finalFlows.length === 1 && Math.abs(Number(finalFlows[0].amount) - totalReceived) <= 0.01) {
-      return; 
-    }
-
-    // 如果走到这里，说明流水缺失或重复。清理掉旧的，重新生成一条最干净的。
+    if (finalFlows.length === 1 && Math.abs(Number(finalFlows[0].amount) - totalReceived) <= 0.01) return;
+    
     flows = flows.filter(f => !(f.completedId === c.id && f.type === 'final'));
     flows.push({
-      id: makeFlowId(),
-      type: 'final',
-      amount: totalReceived,
-      note: '实收（预付款+尾款） · ' + (c.clientName || '未命名') + ' [系统自动修复]',
+      id: makeFlowId(), type: 'final', amount: totalReceived,
+      note: '实收 · ' + (c.clientName || '未命名') + ' [修复]',
       date: c.completedDate || fmtDateStr(new Date()),
-      todoId: c.todoId || '',
-      completedId: c.id,
-      cancelledId: '',
-      discardedId: '',
-      createdAt: Date.now()
+      todoId: c.todoId || '', completedId: c.id, cancelledId: '', discardedId: '', createdAt: Date.now()
     });
     fixedFlows++;
   });
 
-  // 修复撤单/废稿的退款和费用（同理，只补缺失的）
-  cancelled.forEach(c => {
-    if (Number(c.feeAmount) > 0 && !flows.some(f => f.cancelledId === c.id && f.type === 'cancel')) {
-       flows.push({ id: makeFlowId(), type: 'cancel', amount: Number(c.feeAmount), note: '跑单费 [系统修复]', date: c.cancelledDate || fmtDateStr(new Date()), todoId: c.todoId || '', completedId: '', cancelledId: c.id, discardedId: '', createdAt: Date.now() });
-       fixedFlows++;
-    }
-    if (Number(c.refundAmount) > 0 && !flows.some(f => f.cancelledId === c.id && f.type === 'refund')) {
-       flows.push({ id: makeFlowId(), type: 'refund', amount: Number(c.refundAmount), note: '撤单退款 [系统修复]', date: c.cancelledDate || fmtDateStr(new Date()), todoId: c.todoId || '', completedId: '', cancelledId: c.id, discardedId: '', createdAt: Date.now() });
-       fixedFlows++;
-    }
-  });
-
-  discarded.forEach(c => {
-    if (Number(c.feeAmount) > 0 && !flows.some(f => f.discardedId === c.id && f.type === 'discard')) {
-       flows.push({ id: makeFlowId(), type: 'discard', amount: Number(c.feeAmount), note: '废稿费 [系统修复]', date: c.discardedDate || fmtDateStr(new Date()), todoId: c.todoId || '', completedId: '', cancelledId: '', discardedId: c.id, createdAt: Date.now() });
-       fixedFlows++;
-    }
-    if (Number(c.refundAmount) > 0 && !flows.some(f => f.discardedId === c.id && f.type === 'refund')) {
-       flows.push({ id: makeFlowId(), type: 'refund', amount: Number(c.refundAmount), note: '废稿退款 [系统修复]', date: c.discardedDate || fmtDateStr(new Date()), todoId: c.todoId || '', completedId: '', cancelledId: '', discardedId: c.id, createdAt: Date.now() });
-       fixedFlows++;
-    }
-  });
-
-  // ==========================================
-  // 第三步：如果有修复，立刻同步云端
-  // ==========================================
+  // 4. 写入本地并强制上传云端
   if (fixedTodos > 0 || fixedFlows > 0) {
     if (fixedTodos > 0) setTodos(newTodos);
     if (fixedFlows > 0) setFlows(flows);
     
-    localStorage.setItem('listReceiptFlowFixVersion', 'v4');
+    localStorage.setItem('listReceiptFlowFixVersion', 'v5');
     
+    // 强制触发云端同步
     if (typeof currentUser !== 'undefined' && currentUser) {
       window.__hasUnsavedChanges = true;
       if (typeof setPendingFlag === 'function') setPendingFlag(true);
-      if (typeof commitSyncNow === 'function') {
-        setTimeout(() => commitSyncNow(true), 1500);
-      }
+      
+      // 延迟 3 秒执行，等页面加载稳定
+      setTimeout(() => {
+        if (typeof doCoverCloudInternal === 'function') {
+          doCoverCloudInternal(true).then(() => {
+            console.log('✅ 幽灵数据已清理，并成功覆盖云端！');
+            if (typeof showToast === 'function') showToast('✅ 历史脏数据已清理并同步云端', 3000);
+          });
+        }
+      }, 3000);
     }
     
     if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderStatsPage === 'function') renderStatsPage();
     if (typeof renderCompletedList === 'function') renderCompletedList();
-    if (typeof renderCancelledList === 'function') renderCancelledList();
-    if (typeof renderDiscardedList === 'function') renderDiscardedList();
-    
-    console.log(`✅ 安全修复完成：清理了重复待办 ${fixedTodos} 条，修复了异常流水 ${fixedFlows} 条。数据已上传云端。`);
+    console.log(`✅ 修复脚本 v5：清理待办 ${fixedTodos} 条，补全流水 ${fixedFlows} 条。`);
   } else {
-    // 如果没有脏数据，也标记为最新版本，以后不再重复扫描
-    localStorage.setItem('listReceiptFlowFixVersion', 'v4');
+    localStorage.setItem('listReceiptFlowFixVersion', 'v5');
   }
 }
