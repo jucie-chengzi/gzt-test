@@ -26002,94 +26002,85 @@ function showAlgorithmFormulaModal() {
   document.getElementById('modalRoot').innerHTML = html;
 }
 /* ═══════════════════════════════════════════════════════
-   [数据修复] 自动修复历史脏数据（安全防丢版 v4）
+   [数据修复] 自动修复历史脏数据（精准安全版 v5）
    ═══════════════════════════════════════════════════════ */
 function autoFixHistoricalFlows() {
-  // 每次升级版本号，确保用户的浏览器能执行一次最新的修复
-  if (localStorage.getItem('listReceiptFlowFixVersion') === 'v4') return;
+  if (localStorage.getItem('listReceiptFlowFixVersion') === 'v5') return;
   
   const todos = getTodos();
   const completed = getCompleted();
-  const cancelled = getCancelled();
-  const discarded = getDiscarded();
   let flows = getFlows();
-  let fixedTodos = 0;
-  let fixedFlows = 0;
+  let fixedCount = 0;
+  let removedTodoCount = 0;
 
-  // 1. 收集所有已结单/撤单/废稿的 todoId
-  const settledIds = new Set();
-  completed.forEach(c => { if (c.todoId) settledIds.add(c.todoId); });
-  cancelled.forEach(c => { if (c.todoId) settledIds.add(c.todoId); });
-  discarded.forEach(c => { if (c.todoId) settledIds.add(c.todoId); });
-
-  // 2. 安全清理待办：只要订单进了历史记录，待办里就不该有
-  const newTodos = todos.filter(t => {
-    if (settledIds.has(t.id)) {
-      fixedTodos++;
-      return false; 
-    }
-    return true;
-  });
-
-  // 3. 安全补全流水（只给完全没有流水的订单补，绝不删除用户已有的数据）
+  // 1. 安全补全流水（只查漏补缺，不覆盖用户自己记的）
   completed.forEach(c => {
-    // 兼容老数据：如果没有 totalReceived，尝试用 prepaid + finalAmount 计算
-    let totalReceived = Number(c.totalReceived);
-    if (isNaN(totalReceived) || totalReceived === 0) {
-      totalReceived = (Number(c.prepaid) || 0) + (Number(c.finalAmount) || 0);
-    }
+    const totalReceived = Number(c.totalReceived) || 0;
     if (totalReceived <= 0) return;
 
-    // 检查这个订单到底有没有产生过实收流水
-    const hasAnyFlow = flows.some(f => 
-      f.completedId === c.id || 
-      (c.todoId && f.todoId === c.todoId && (f.type === 'final' || f.type === 'prepaid'))
-    );
+    const related = flows.filter(f => f.completedId === c.id);
+    const finalFlows = related.filter(f => f.type === 'final');
 
-    // ★ 核心安全机制：如果已经有过流水了，哪怕金额不对，也绝对不碰！
-    // 只有当他一条流水都没有（纯脏数据）时，才帮他补一条。
-    if (!hasAnyFlow) {
+    let needsFix = false;
+    if (finalFlows.length !== 1) {
+      needsFix = true;
+    } else if (Math.abs(Number(finalFlows[0].amount) - totalReceived) > 0.01) {
+      needsFix = true;
+    }
+
+    if (needsFix) {
+      flows = flows.filter(f => f.completedId !== c.id);
       flows.push({
         id: makeFlowId(),
         type: 'final',
         amount: totalReceived,
-        note: '实收（系统补录） · ' + (c.clientName || '未命名'),
-        date: c.completedDate || c.orderDate || fmtDateStr(new Date()),
+        note: '实收（预付款+尾款） · ' + (c.clientName || '未命名') + ' [系统自动修复]',
+        date: c.completedDate || fmtDateStr(new Date()),
         todoId: c.todoId || '',
         completedId: c.id,
         cancelledId: '',
         discardedId: '',
         createdAt: Date.now()
       });
-      fixedFlows++;
+      fixedCount++;
     }
   });
 
-  // 4. 写入本地并静默同步云端
-  if (fixedTodos > 0 || fixedFlows > 0) {
-    if (fixedTodos > 0) setTodos(newTodos);
-    if (fixedFlows > 0) setFlows(flows);
+  // 2. 极其精准地清理待办残留（必须同时满足三个条件才会删）
+  const newTodos = todos.filter(t => {
+    // 查找有没有跟这个待办对应的结单记录
+    const matchComplete = completed.find(c => c.todoId === t.id);
     
-    localStorage.setItem('listReceiptFlowFixVersion', 'v4');
+    // ★ 安全判定：只有结单记录里有明确的结单日期、且明确收到了钱，才认为是真结单
+    if (matchComplete && matchComplete.completedDate && Number(matchComplete.totalReceived) > 0) {
+      removedTodoCount++;
+      return false; // 从待办中移除
+    }
     
-    // 如果有登录，延迟 2 秒后自动触发一次云端同步，确保上传成功
+    // 如果找不到匹配的，或者只是个误入结单表的空壳，保留在待办里！
+    return true; 
+  });
+
+  if (fixedCount > 0 || removedTodoCount > 0) {
+    if (fixedCount > 0) setFlows(flows);
+    if (removedTodoCount > 0) setTodos(newTodos);
+
+    localStorage.setItem('listReceiptFlowFixVersion', 'v5');
+
+    // 静默同步云端
     if (typeof currentUser !== 'undefined' && currentUser) {
       window.__hasUnsavedChanges = true;
       if (typeof setPendingFlag === 'function') setPendingFlag(true);
       if (typeof commitSyncNow === 'function') {
-        setTimeout(() => commitSyncNow(true), 2000);
+        setTimeout(() => commitSyncNow(true), 1000);
       }
     }
     
-    // 刷新页面数据
     if (typeof renderTodoList === 'function') renderTodoList();
     if (typeof renderStatsPage === 'function') renderStatsPage();
-    if (typeof renderCompletedList === 'function') renderCompletedList();
-    if (typeof renderCancelledList === 'function') renderCancelledList();
-    if (typeof renderDiscardedList === 'function') renderDiscardedList();
     
-    console.log(`✅ 数据修复成功：清理残留待办 ${fixedTodos} 条，补录缺失流水 ${fixedFlows} 条。`);
+    console.log(`✅ 修复完成：补全流水 ${fixedCount} 条，安全清理已结单残留待办 ${removedTodoCount} 条。`);
   } else {
-    localStorage.setItem('listReceiptFlowFixVersion', 'v4');
+    localStorage.setItem('listReceiptFlowFixVersion', 'v5');
   }
 }
